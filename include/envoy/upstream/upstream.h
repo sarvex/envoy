@@ -184,6 +184,11 @@ public:
   COUNTER  (lb_zone_routing_all_directly)                                                          \
   COUNTER  (lb_zone_routing_sampled)                                                               \
   COUNTER  (lb_zone_routing_cross_zone)                                                            \
+  GAUGE    (lb_subsets_active)                                                                     \
+  COUNTER  (lb_subsets_created)                                                                    \
+  COUNTER  (lb_subsets_removed)                                                                    \
+  COUNTER  (lb_subsets_selected)                                                                   \
+  COUNTER  (lb_subsets_fallback)                                                                   \
   COUNTER  (upstream_cx_total)                                                                     \
   GAUGE    (upstream_cx_active)                                                                    \
   COUNTER  (upstream_cx_http1_total)                                                               \
@@ -391,8 +396,11 @@ public:
   /**
    * Initialize the cluster. This will be called either immediately at creation or after all primary
    * clusters have been initialized (determined via initializePhase()).
+   * @param callback supplies a callback that will be invoked after the cluster has undergone first
+   *        time initialization. E.g., for a dynamic DNS cluster the initialize callback will be
+   *        called when initial DNS resolution is complete.
    */
-  virtual void initialize() PURE;
+  virtual void initialize(std::function<void()> callback) PURE;
 
   /**
    * @return the phase in which the cluster is initialized at boot. This mechanism is used such that
@@ -400,13 +408,6 @@ public:
    *         that depends on resolution of the SDS server itself).
    */
   virtual InitializePhase initializePhase() const PURE;
-
-  /**
-   * Set a callback that will be invoked after the cluster has undergone first time initialization.
-   * E.g., for a dynamic DNS cluster the initialize callback will be called when initial DNS
-   * resolution is complete.
-   */
-  virtual void setInitializedCb(std::function<void()> callback) PURE;
 };
 
 typedef std::shared_ptr<Cluster> ClusterSharedPtr;

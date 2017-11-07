@@ -1,5 +1,3 @@
-load("@protobuf_bzl//:protobuf.bzl", "cc_proto_library")
-
 def envoy_package():
     native.package(default_visibility = ["//visibility:public"])
 
@@ -12,7 +10,7 @@ def envoy_copts(repository, test = False):
         "-Wnon-virtual-dtor",
         "-Woverloaded-virtual",
         "-Wold-style-cast",
-        "-std=c++0x",
+        "-std=c++14",
     ] + select({
         # Bazel adds an implicit -DNDEBUG for opt.
         repository + "//bazel:opt_build": [] if test else ["-ggdb3"],
@@ -42,10 +40,13 @@ def envoy_linkopts():
             # TODO(zuercher): should be able to remove this after the next gperftools release after
             # 2.6.1 (see discussion at https://github.com/gperftools/gperftools/issues/901)
             "-Wl,-U,___lsan_ignore_object",
+            # See note here: http://luajit.org/install.html
+            "-pagezero_size 10000", "-image_base 100000000",
         ],
         "//conditions:default": [
             "-pthread",
             "-lrt",
+            "-ldl",
             # Force MD5 hash in build. This is part of the workaround for
             # https://github.com/bazelbuild/bazel/issues/2805. Bazel actually
             # does this by itself prior to
@@ -68,11 +69,13 @@ def envoy_test_linkopts():
             # TODO(zuercher): should be able to remove this after the next gperftools release after
             # 2.6.1 (see discussion at https://github.com/gperftools/gperftools/issues/901)
             "-Wl,-U,___lsan_ignore_object",
+            # See note here: http://luajit.org/install.html
+            "-pagezero_size 10000", "-image_base 100000000",
         ],
 
         # TODO(mattklein123): It's not great that we universally link against the following libs.
         # In particular, -latomic and -lrt are not needed on all platforms. Make this more granular.
-        "//conditions:default": ["-pthread", "-latomic", "-lrt"],
+        "//conditions:default": ["-pthread", "-latomic", "-lrt", "-ldl"],
     })
 
 # References to Envoy external dependencies should be wrapped with this function.
@@ -167,7 +170,8 @@ def envoy_cc_binary(name,
                     visibility = None,
                     repository = "",
                     stamped = False,
-                    deps = []):
+                    deps = [],
+                    linkopts = envoy_linkopts()):
     # Implicit .stamped targets to obtain builds with the (truncated) git SHA1.
     if stamped:
         _git_stamped_genrule(repository, name)
@@ -177,7 +181,7 @@ def envoy_cc_binary(name,
         srcs = srcs,
         data = data,
         copts = envoy_copts(repository),
-        linkopts = envoy_linkopts(),
+        linkopts = linkopts,
         testonly = testonly,
         linkstatic = 1,
         visibility = visibility,
@@ -305,24 +309,15 @@ def _proto_header(proto_path):
 
 # Envoy proto targets should be specified with this function.
 def envoy_proto_library(name, srcs = [], deps = [], external_deps = []):
-    internal_name = name + "_internal"
-    cc_proto_library(
-        name = internal_name,
+    internal_proto_lib_name = name + "_internal_proto_lib"
+    native.proto_library(
+        name = internal_proto_lib_name,
         srcs = srcs,
-        default_runtime = "//external:protobuf",
-        protoc = "//external:protoc",
         deps = deps + [envoy_external_dep_path(dep) for dep in external_deps],
-        linkstatic = 1,
     )
-    # We can't use include_prefix directly in cc_proto_library, since it
-    # confuses protoc. Instead, we create a shim cc_library that performs the
-    # remap of .pb.h location to Envoy canonical header paths.
-    native.cc_library(
+    native.cc_proto_library(
         name = name,
-        hdrs = [_proto_header(s) for s in srcs if _proto_header(s)],
-        include_prefix = envoy_include_prefix(PACKAGE_NAME),
-        deps = [internal_name],
-        linkstatic = 1,
+        deps = [internal_proto_lib_name],
     )
 
 # Envoy proto descriptor targets should be specified with this function.
@@ -336,8 +331,8 @@ def envoy_proto_descriptor(name, out, srcs = [], external_deps = []):
         include_paths.append("external/googleapis")
 
     if "well_known_protos" in external_deps:
-        srcs.append("@protobuf_bzl//:well_known_protos")
-        include_paths.append("external/protobuf_bzl/src")
+        srcs.append("@com_google_protobuf//:well_known_protos")
+        include_paths.append("external/com_google_protobuf/src")
 
     options = ["--include_imports"]
     options.extend(["-I" + include_path for include_path in include_paths])

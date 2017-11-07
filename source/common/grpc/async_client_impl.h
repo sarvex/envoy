@@ -38,7 +38,7 @@ public:
         *this, service_method, request, callbacks, parent_span, timeout);
     std::unique_ptr<AsyncStreamImpl<RequestType, ResponseType>> grpc_stream{async_request};
 
-    grpc_stream->initialize();
+    grpc_stream->initialize(true);
     if (grpc_stream->hasResetStream()) {
       return nullptr;
     }
@@ -54,7 +54,7 @@ public:
         new AsyncStreamImpl<RequestType, ResponseType>(*this, service_method, callbacks,
                                                        no_timeout)};
 
-    grpc_stream->initialize();
+    grpc_stream->initialize(false);
     if (grpc_stream->hasResetStream()) {
       return nullptr;
     }
@@ -85,10 +85,11 @@ public:
       : parent_(parent), service_method_(service_method), callbacks_(callbacks), timeout_(timeout) {
   }
 
-  virtual void initialize() {
+  virtual void initialize(bool buffer_body_for_retry) {
     auto& http_async_client = parent_.cm_.httpAsyncClientForCluster(parent_.remote_cluster_name_);
     dispatcher_ = &http_async_client.dispatcher();
-    stream_ = http_async_client.start(*this, Optional<std::chrono::milliseconds>(timeout_));
+    stream_ = http_async_client.start(*this, Optional<std::chrono::milliseconds>(timeout_),
+                                      buffer_body_for_retry);
 
     if (stream_ == nullptr) {
       callbacks_.onRemoteClose(Status::GrpcStatus::Unavailable, EMPTY_STRING);
@@ -259,14 +260,8 @@ private:
   friend class AsyncClientImpl<RequestType, ResponseType>;
 };
 
-class AsyncClientTracingConfig : public Tracing::Config {
+class AsyncClientTracingConfig : public Tracing::EgressConfigImpl {
 public:
-  // Tracing::Config
-  Tracing::OperationName operationName() const override { return Tracing::OperationName::Egress; }
-  const std::vector<Http::LowerCaseString>& requestHeadersForTags() const override {
-    return request_headers_for_tags_;
-  }
-
   struct {
     const std::string STATUS = "status";
     const std::string GRPC_STATUS = "grpc.status_code";
@@ -275,9 +270,6 @@ public:
     const std::string TRUE = "true";
     const std::string UPSTREAM_CLUSTER_NAME = "upstream_cluster_name";
   } TagStrings;
-
-private:
-  const std::vector<Http::LowerCaseString> request_headers_for_tags_;
 };
 
 typedef ConstSingleton<AsyncClientTracingConfig> TracingConfig;
@@ -301,8 +293,8 @@ public:
                           parent.remote_cluster_name_);
   }
 
-  void initialize() override {
-    AsyncStreamImpl<RequestType, ResponseType>::initialize();
+  void initialize(bool buffer_body_for_retry) override {
+    AsyncStreamImpl<RequestType, ResponseType>::initialize(buffer_body_for_retry);
     if (this->hasResetStream()) {
       return;
     }

@@ -294,6 +294,57 @@ TEST_F(ClusterManagerImplTest, OriginalDstLbRestriction2) {
       "cluster: LB type 'original_dst_lb' may only be used with cluser type 'original_dst'");
 }
 
+TEST_F(ClusterManagerImplTest, SubsetLoadBalancerInitialization) {
+  const std::string json = R"EOF(
+  {
+    "clusters": [
+    {
+      "name": "cluster_1",
+      "connect_timeout_ms": 250,
+      "type": "static",
+      "lb_type": "round_robin",
+      "hosts": [{"url": "tcp://127.0.0.1:8000"}, {"url": "tcp://127.0.0.1:8001"}]
+    }]
+  }
+  )EOF";
+
+  envoy::api::v2::Bootstrap bootstrap = parseBootstrapFromJson(json);
+  envoy::api::v2::Cluster::LbSubsetConfig* subset_config =
+      bootstrap.mutable_static_resources()->mutable_clusters(0)->mutable_lb_subset_config();
+  subset_config->set_fallback_policy(envoy::api::v2::Cluster::LbSubsetConfig::ANY_ENDPOINT);
+  subset_config->add_subset_selectors()->add_keys("x");
+
+  create(bootstrap);
+
+  EXPECT_EQ(1UL, factory_.stats_.gauge("cluster_manager.total_clusters").value());
+
+  factory_.tls_.shutdownThread();
+}
+
+TEST_F(ClusterManagerImplTest, SubsetLoadBalancerRestriction) {
+  const std::string json = R"EOF(
+  {
+    "clusters": [
+    {
+      "name": "cluster_1",
+      "connect_timeout_ms": 250,
+      "type": "original_dst",
+      "lb_type": "original_dst_lb"
+    }]
+  }
+  )EOF";
+
+  envoy::api::v2::Bootstrap bootstrap = parseBootstrapFromJson(json);
+  envoy::api::v2::Cluster::LbSubsetConfig* subset_config =
+      bootstrap.mutable_static_resources()->mutable_clusters(0)->mutable_lb_subset_config();
+  subset_config->set_fallback_policy(envoy::api::v2::Cluster::LbSubsetConfig::ANY_ENDPOINT);
+  subset_config->add_subset_selectors()->add_keys("x");
+
+  EXPECT_THROW_WITH_MESSAGE(
+      create(bootstrap), EnvoyException,
+      "cluster: cluster type 'original_dst' may not be used with lb_subset_config");
+}
+
 TEST_F(ClusterManagerImplTest, TcpHealthChecker) {
   const std::string json = R"EOF(
   {
@@ -445,12 +496,12 @@ TEST_F(ClusterManagerImplTest, InitializeOrder) {
   InSequence s;
   EXPECT_CALL(factory_, clusterFromProto_(_, _, _, _)).WillOnce(Return(cluster1));
   ON_CALL(*cluster1, initializePhase()).WillByDefault(Return(Cluster::InitializePhase::Primary));
-  EXPECT_CALL(*cluster1, initialize());
+  EXPECT_CALL(*cluster1, initialize(_));
   EXPECT_CALL(factory_, clusterFromProto_(_, _, _, _)).WillOnce(Return(cluster2));
   ON_CALL(*cluster2, initializePhase()).WillByDefault(Return(Cluster::InitializePhase::Secondary));
   EXPECT_CALL(factory_, clusterFromProto_(_, _, _, _)).WillOnce(Return(cds_cluster));
   ON_CALL(*cds_cluster, initializePhase()).WillByDefault(Return(Cluster::InitializePhase::Primary));
-  EXPECT_CALL(*cds_cluster, initialize());
+  EXPECT_CALL(*cds_cluster, initialize(_));
   EXPECT_CALL(factory_, createCds_()).WillOnce(Return(cds));
   EXPECT_CALL(*cds, setInitializedCb(_));
 
@@ -459,7 +510,7 @@ TEST_F(ClusterManagerImplTest, InitializeOrder) {
   ReadyWatcher initialized;
   cluster_manager_->setInitializedCb([&]() -> void { initialized.ready(); });
 
-  EXPECT_CALL(*cluster2, initialize());
+  EXPECT_CALL(*cluster2, initialize(_));
   cds_cluster->initialize_callback_();
   cluster1->initialize_callback_();
 
@@ -480,7 +531,7 @@ TEST_F(ClusterManagerImplTest, InitializeOrder) {
 
   EXPECT_CALL(factory_, clusterFromProto_(_, _, _, _)).WillOnce(Return(cluster4));
   ON_CALL(*cluster4, initializePhase()).WillByDefault(Return(Cluster::InitializePhase::Primary));
-  EXPECT_CALL(*cluster4, initialize());
+  EXPECT_CALL(*cluster4, initialize(_));
   cluster_manager_->addOrUpdatePrimaryCluster(defaultStaticCluster("cluster4"));
 
   EXPECT_CALL(factory_, clusterFromProto_(_, _, _, _)).WillOnce(Return(cluster5));
@@ -489,7 +540,7 @@ TEST_F(ClusterManagerImplTest, InitializeOrder) {
 
   cds->initialized_callback_();
 
-  EXPECT_CALL(*cluster3, initialize());
+  EXPECT_CALL(*cluster3, initialize(_));
   cluster4->initialize_callback_();
 
   // Test cluster 5 getting removed before everything is initialized.
@@ -524,7 +575,7 @@ TEST_F(ClusterManagerImplTest, DynamicRemoveWithLocalCluster) {
   foo->info_->name_ = "foo";
   EXPECT_CALL(factory_, clusterFromProto_(_, _, _, false)).WillOnce(Return(foo));
   ON_CALL(*foo, initializePhase()).WillByDefault(Return(Cluster::InitializePhase::Primary));
-  EXPECT_CALL(*foo, initialize());
+  EXPECT_CALL(*foo, initialize(_));
 
   create(parseBootstrapFromJson(json));
   foo->initialize_callback_();
@@ -535,7 +586,7 @@ TEST_F(ClusterManagerImplTest, DynamicRemoveWithLocalCluster) {
   cluster1->info_->name_ = "cluster1";
   EXPECT_CALL(factory_, clusterFromProto_(_, _, _, true)).WillOnce(Return(cluster1));
   ON_CALL(*cluster1, initializePhase()).WillByDefault(Return(Cluster::InitializePhase::Primary));
-  EXPECT_CALL(*cluster1, initialize());
+  EXPECT_CALL(*cluster1, initialize(_));
   cluster_manager_->addOrUpdatePrimaryCluster(defaultStaticCluster("cluster1"));
 
   // Add another update callback on foo so we make sure callbacks keep working.
@@ -577,7 +628,7 @@ TEST_F(ClusterManagerImplTest, DynamicAddRemove) {
   std::shared_ptr<MockCluster> cluster1(new NiceMock<MockCluster>());
   EXPECT_CALL(factory_, clusterFromProto_(_, _, _, _)).WillOnce(Return(cluster1));
   EXPECT_CALL(*cluster1, initializePhase()).Times(0);
-  EXPECT_CALL(*cluster1, initialize());
+  EXPECT_CALL(*cluster1, initialize(_));
   EXPECT_TRUE(cluster_manager_->addOrUpdatePrimaryCluster(defaultStaticCluster("fake_cluster")));
 
   EXPECT_EQ(cluster1->info_, cluster_manager_->get("fake_cluster")->info());
@@ -594,7 +645,7 @@ TEST_F(ClusterManagerImplTest, DynamicAddRemove) {
   cluster2->hosts_ = {makeTestHost(cluster2->info_, "tcp://127.0.0.1:80")};
   EXPECT_CALL(factory_, clusterFromProto_(_, _, _, _)).WillOnce(Return(cluster2));
   EXPECT_CALL(*cluster2, initializePhase()).Times(0);
-  EXPECT_CALL(*cluster2, initialize());
+  EXPECT_CALL(*cluster2, initialize(_));
   EXPECT_TRUE(cluster_manager_->addOrUpdatePrimaryCluster(update_cluster));
 
   EXPECT_EQ(cluster2->info_, cluster_manager_->get("fake_cluster")->info());
@@ -632,7 +683,7 @@ TEST_F(ClusterManagerImplTest, AddOrUpdatePrimaryClusterStaticExists) {
   InSequence s;
   EXPECT_CALL(factory_, clusterFromProto_(_, _, _, _)).WillOnce(Return(cluster1));
   ON_CALL(*cluster1, initializePhase()).WillByDefault(Return(Cluster::InitializePhase::Primary));
-  EXPECT_CALL(*cluster1, initialize());
+  EXPECT_CALL(*cluster1, initialize(_));
 
   create(parseBootstrapFromJson(json));
 
@@ -832,7 +883,7 @@ TEST(ClusterManagerInitHelper, ImmediateInitialize) {
 
   NiceMock<MockCluster> cluster1;
   ON_CALL(cluster1, initializePhase()).WillByDefault(Return(Cluster::InitializePhase::Primary));
-  EXPECT_CALL(cluster1, initialize());
+  EXPECT_CALL(cluster1, initialize(_));
   init_helper.addCluster(cluster1);
   cluster1.initialize_callback_();
 
@@ -849,7 +900,7 @@ TEST(ClusterManagerInitHelper, StaticSdsInitialize) {
 
   NiceMock<MockCluster> sds;
   ON_CALL(sds, initializePhase()).WillByDefault(Return(Cluster::InitializePhase::Primary));
-  EXPECT_CALL(sds, initialize());
+  EXPECT_CALL(sds, initialize(_));
   init_helper.addCluster(sds);
   sds.initialize_callback_();
 
@@ -857,7 +908,7 @@ TEST(ClusterManagerInitHelper, StaticSdsInitialize) {
   ON_CALL(cluster1, initializePhase()).WillByDefault(Return(Cluster::InitializePhase::Secondary));
   init_helper.addCluster(cluster1);
 
-  EXPECT_CALL(cluster1, initialize());
+  EXPECT_CALL(cluster1, initialize(_));
   init_helper.onStaticLoadComplete();
 
   ReadyWatcher cm_initialized;
@@ -876,12 +927,12 @@ TEST(ClusterManagerInitHelper, UpdateAlreadyInitialized) {
 
   NiceMock<MockCluster> cluster1;
   ON_CALL(cluster1, initializePhase()).WillByDefault(Return(Cluster::InitializePhase::Primary));
-  EXPECT_CALL(cluster1, initialize());
+  EXPECT_CALL(cluster1, initialize(_));
   init_helper.addCluster(cluster1);
 
   NiceMock<MockCluster> cluster2;
   ON_CALL(cluster2, initializePhase()).WillByDefault(Return(Cluster::InitializePhase::Primary));
-  EXPECT_CALL(cluster2, initialize());
+  EXPECT_CALL(cluster2, initialize(_));
   init_helper.addCluster(cluster2);
 
   init_helper.onStaticLoadComplete();
@@ -902,7 +953,7 @@ TEST(ClusterManagerInitHelper, AddSecondaryAfterSecondaryInit) {
 
   NiceMock<MockCluster> cluster1;
   ON_CALL(cluster1, initializePhase()).WillByDefault(Return(Cluster::InitializePhase::Primary));
-  EXPECT_CALL(cluster1, initialize());
+  EXPECT_CALL(cluster1, initialize(_));
   init_helper.addCluster(cluster1);
 
   NiceMock<MockCluster> cluster2;
@@ -911,12 +962,12 @@ TEST(ClusterManagerInitHelper, AddSecondaryAfterSecondaryInit) {
 
   init_helper.onStaticLoadComplete();
 
-  EXPECT_CALL(cluster2, initialize());
+  EXPECT_CALL(cluster2, initialize(_));
   cluster1.initialize_callback_();
 
   NiceMock<MockCluster> cluster3;
   ON_CALL(cluster3, initializePhase()).WillByDefault(Return(Cluster::InitializePhase::Secondary));
-  EXPECT_CALL(cluster3, initialize());
+  EXPECT_CALL(cluster3, initialize(_));
   init_helper.addCluster(cluster3);
 
   cluster3.initialize_callback_();
@@ -937,7 +988,7 @@ TEST(ClusterManagerInitHelper, RemoveClusterWithinInitLoop) {
   // Set up the scenario seen in Issue 903 where initialize() ultimately results
   // in the removeCluster() call. In the real bug this was a long and complex call
   // chain.
-  EXPECT_CALL(cluster, initialize()).WillOnce(Invoke([&]() -> void {
+  EXPECT_CALL(cluster, initialize(_)).WillOnce(Invoke([&](std::function<void()>) -> void {
     init_helper.removeCluster(cluster);
   }));
 

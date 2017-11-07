@@ -51,6 +51,12 @@ inline envoy::api::v2::Cluster parseClusterFromJson(const std::string& json_stri
   return cluster;
 }
 
+inline envoy::api::v2::Cluster parseClusterFromV2Yaml(const std::string& yaml) {
+  envoy::api::v2::Cluster cluster;
+  MessageUtil::loadFromYaml(yaml, cluster);
+  return cluster;
+}
+
 inline envoy::api::v2::Cluster defaultStaticCluster(const std::string& name) {
   return parseClusterFromJson(defaultStaticClusterJson(name));
 }
@@ -69,6 +75,12 @@ inline HostSharedPtr makeTestHost(ClusterInfoConstSharedPtr cluster, const std::
   return HostSharedPtr{new HostImpl(cluster, "", Network::Utility::resolveUrl(url),
                                     envoy::api::v2::Metadata::default_instance(), weight,
                                     envoy::api::v2::Locality())};
+}
+
+inline HostSharedPtr makeTestHost(ClusterInfoConstSharedPtr cluster, const std::string& url,
+                                  const envoy::api::v2::Metadata& metadata, uint32_t weight = 1) {
+  return HostSharedPtr{new HostImpl(cluster, "", Network::Utility::resolveUrl(url), metadata,
+                                    weight, envoy::api::v2::Locality())};
 }
 
 inline HostDescriptionConstSharedPtr makeTestHostDescription(ClusterInfoConstSharedPtr cluster,

@@ -156,8 +156,17 @@ envoy_cc_test(
         "//source/common/config:lds_json_lib",
         "//source/common/config:rds_json_lib",
         "//source/common/config:utility_lib",
+        "//source/common/config:well_known_names",
         "//source/common/stats:stats_lib",
         "//test/mocks/local_info:local_info_mocks",
         "//test/test_common:utility_lib",
+    ],
+)
+
+envoy_cc_test(
+    name = "filter_json_test",
+    srcs = ["filter_json_test.cc"],
+    deps = [
+        "//source/common/config:filter_json_lib",
     ],
 )
