@@ -33,6 +33,18 @@ ConnPoolImpl::~ConnPoolImpl() {
   dispatcher_.clearDeferredDeleteList();
 }
 
+void ConnPoolImpl::drainConnections() {
+  while (!ready_clients_.empty()) {
+    ready_clients_.front()->codec_client_->close();
+  }
+
+  // We drain busy clients by manually setting remaining requests to 1. Thus, when the next
+  // response completes the client will be destroyed.
+  for (const auto& client : busy_clients_) {
+    client->remaining_requests_ = 1;
+  }
+}
+
 void ConnPoolImpl::addDrainedCallback(DrainedCb cb) {
   drained_callbacks_.push_back(cb);
   checkForDrained();

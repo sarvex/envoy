@@ -48,39 +48,32 @@ bool CidrRange::operator==(const CidrRange& other) const {
   if (length_ != other.length_ || length_ == -1) {
     return false;
   }
-  if (version() == IpVersion::v4) {
-    return other.version() == IpVersion::v4 && ipv4()->address() == other.ipv4()->address();
+
+  if (address_ == nullptr || other.address_ == nullptr) {
+    return false;
+  }
+
+  if (address_->ip()->version() == IpVersion::v4) {
+    return other.address_->ip()->version() == IpVersion::v4 &&
+           address_->ip()->ipv4()->address() == other.address_->ip()->ipv4()->address();
   } else {
-    return other.version() == IpVersion::v6 && ipv6()->address() == other.ipv6()->address();
+    return other.address_->ip()->version() == IpVersion::v6 &&
+           address_->ip()->ipv6()->address() == other.address_->ip()->ipv6()->address();
   }
 }
 
-const Ipv4* CidrRange::ipv4() const {
+const Ip* CidrRange::ip() const {
   if (address_ != nullptr) {
-    return address_->ip()->ipv4();
-  }
-  return nullptr;
-}
-
-const Ipv6* CidrRange::ipv6() const {
-  if (address_ != nullptr) {
-    return address_->ip()->ipv6();
+    return address_->ip();
   }
   return nullptr;
 }
 
 int CidrRange::length() const { return length_; }
 
-IpVersion CidrRange::version() const {
-  if (address_ != nullptr) {
-    return address_->ip()->version();
-  }
-  return IpVersion::v4;
-}
-
 bool CidrRange::isInRange(const Instance& address) const {
   if (address_ == nullptr || !isValid() || address.type() != Type::Ip ||
-      version() != address.ip()->version()) {
+      address_->ip()->version() != address.ip()->version()) {
     return false;
   }
 
@@ -92,7 +85,7 @@ bool CidrRange::isInRange(const Instance& address) const {
   switch (address.ip()->version()) {
   case IpVersion::v4:
     if (ntohl(address.ip()->ipv4()->address()) >> (32 - length_) ==
-        ntohl(ipv4()->address()) >> (32 - length_)) {
+        ntohl(address_->ip()->ipv4()->address()) >> (32 - length_)) {
       return true;
     }
     break;
@@ -103,9 +96,9 @@ bool CidrRange::isInRange(const Instance& address) const {
       if (length < 8) {
         // Compare relevant bits.
         return (address.ip()->ipv6()->address()[i] >> (8 - length) ==
-                ipv6()->address()[i] >> (8 - length));
+                address_->ip()->ipv6()->address()[i] >> (8 - length));
       } else {
-        if (address.ip()->ipv6()->address()[i] == ipv6()->address()[i]) {
+        if (address.ip()->ipv6()->address()[i] == address_->ip()->ipv6()->address()[i]) {
           if (length == 8) {
             return true;
           } else {
@@ -140,14 +133,19 @@ CidrRange CidrRange::create(const std::string& address, int length) {
   return create(Utility::parseInternetAddress(address), length);
 }
 
+CidrRange CidrRange::create(const envoy::api::v2::CidrRange& cidr) {
+  return create(Utility::parseInternetAddress(cidr.address_prefix()), cidr.prefix_len().value());
+}
+
 // static
 CidrRange CidrRange::create(const std::string& range) {
-  std::vector<std::string> parts = StringUtil::split(range, '/');
+  const auto parts = StringUtil::splitToken(range, "/");
   if (parts.size() == 2) {
-    InstanceConstSharedPtr ptr = Utility::parseInternetAddress(parts[0]);
+    InstanceConstSharedPtr ptr = Utility::parseInternetAddress(std::string{parts[0]});
     if (ptr->type() == Type::Ip) {
       uint64_t length64;
-      if (StringUtil::atoul(parts[1].c_str(), length64, 10)) {
+      const std::string part{parts[1]};
+      if (StringUtil::atoul(part.c_str(), length64, 10)) {
         if ((ptr->ip()->version() == IpVersion::v6 && length64 <= 128) ||
             (ptr->ip()->version() == IpVersion::v4 && length64 <= 32)) {
           return create(std::move(ptr), static_cast<uint32_t>(length64));
@@ -231,6 +229,19 @@ IpList::IpList(const std::vector<std::string>& subnets) {
     } else {
       throw EnvoyException(
           fmt::format("invalid ip/mask combo '{}' (format is <ip>/<# mask bits>)", entry));
+    }
+  }
+}
+
+IpList::IpList(const Protobuf::RepeatedPtrField<envoy::api::v2::CidrRange>& cidrs) {
+  for (const envoy::api::v2::CidrRange& entry : cidrs) {
+    CidrRange list_entry = CidrRange::create(entry);
+    if (list_entry.isValid()) {
+      ip_list_.push_back(list_entry);
+    } else {
+      throw EnvoyException(
+          fmt::format("invalid ip/mask combo '{}/{}' (format is <ip>/<# mask bits>)",
+                      entry.address_prefix(), entry.prefix_len().value()));
     }
   }
 }

@@ -19,10 +19,10 @@
 
 #include "common/buffer/buffer_impl.h"
 #include "common/common/logger.h"
-#include "common/common/singleton.h"
 #include "common/mongo/utility.h"
 #include "common/network/filter_impl.h"
 #include "common/protobuf/utility.h"
+#include "common/singleton/const_singleton.h"
 
 #include "api/filter/network/mongo_proxy.pb.h"
 
@@ -36,6 +36,7 @@ public:
   const std::string LoggingEnabled{"mongo.logging_enabled"};
   const std::string ProxyEnabled{"mongo.proxy_enabled"};
   const std::string ConnectionLoggingEnabled{"mongo.connection_logging_enabled"};
+  const std::string DrainCloseEnabled{"mongo.drain_close_enabled"};
 };
 
 typedef ConstSingleton<MongoRuntimeConfigKeys> MongoRuntimeConfig;

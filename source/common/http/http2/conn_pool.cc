@@ -31,6 +31,12 @@ ConnPoolImpl::~ConnPoolImpl() {
   dispatcher_.clearDeferredDeleteList();
 }
 
+void ConnPoolImpl::ConnPoolImpl::drainConnections() {
+  if (primary_client_ != nullptr) {
+    movePrimaryClientToDraining();
+  }
+}
+
 void ConnPoolImpl::addDrainedCallback(DrainedCb cb) {
   drained_callbacks_.push_back(cb);
   checkForDrained();

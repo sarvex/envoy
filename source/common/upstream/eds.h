@@ -33,9 +33,12 @@ public:
   void onConfigUpdateFailed(const EnvoyException* e) override;
 
 private:
+  void updateHostsPerLocality(HostSet& host_set, std::vector<HostSharedPtr>& new_hosts);
+
   // ClusterImplBase
   void startPreInit() override;
 
+  const ClusterManager& cm_;
   std::unique_ptr<Config::Subscription<envoy::api::v2::ClusterLoadAssignment>> subscription_;
   const LocalInfo::LocalInfo& local_info_;
   const std::string cluster_name_;

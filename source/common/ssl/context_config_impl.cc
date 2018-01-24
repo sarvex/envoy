@@ -7,6 +7,8 @@
 #include "common/filesystem/filesystem_impl.h"
 #include "common/protobuf/utility.h"
 
+#include "openssl/ssl.h"
+
 namespace Envoy {
 namespace Ssl {
 
@@ -39,27 +41,74 @@ ContextConfigImpl::ContextConfigImpl(const envoy::api::v2::CommonTlsContext& con
           RepeatedPtrUtil::join(config.tls_params().cipher_suites(), ":"), DEFAULT_CIPHER_SUITES)),
       ecdh_curves_(StringUtil::nonEmptyStringOrDefault(
           RepeatedPtrUtil::join(config.tls_params().ecdh_curves(), ":"), DEFAULT_ECDH_CURVES)),
-      ca_cert_file_(config.validation_context().trusted_ca().filename()),
-      cert_chain_file_(config.tls_certificates().empty()
+      ca_cert_(readDataSource(config.validation_context().trusted_ca(), true)),
+      ca_cert_path_(getDataSourcePath(config.validation_context().trusted_ca())),
+      cert_chain_(config.tls_certificates().empty()
+                      ? ""
+                      : readDataSource(config.tls_certificates()[0].certificate_chain(), true)),
+      cert_chain_path_(config.tls_certificates().empty()
                            ? ""
-                           : config.tls_certificates()[0].certificate_chain().filename()),
-      private_key_file_(config.tls_certificates().empty()
+                           : getDataSourcePath(config.tls_certificates()[0].certificate_chain())),
+      private_key_(config.tls_certificates().empty()
+                       ? ""
+                       : readDataSource(config.tls_certificates()[0].private_key(), true)),
+      private_key_path_(config.tls_certificates().empty()
                             ? ""
-                            : config.tls_certificates()[0].private_key().filename()),
+                            : getDataSourcePath(config.tls_certificates()[0].private_key())),
       verify_subject_alt_name_list_(config.validation_context().verify_subject_alt_name().begin(),
                                     config.validation_context().verify_subject_alt_name().end()),
       verify_certificate_hash_(config.validation_context().verify_certificate_hash().empty()
                                    ? ""
-                                   : config.validation_context().verify_certificate_hash()[0]) {
+                                   : config.validation_context().verify_certificate_hash()[0]),
+      min_protocol_version_(
+          tlsVersionFromProto(config.tls_params().tls_minimum_protocol_version(), TLS1_VERSION)),
+      max_protocol_version_(
+          tlsVersionFromProto(config.tls_params().tls_maximum_protocol_version(), TLS1_2_VERSION)) {
   // TODO(htuch): Support multiple hashes.
   ASSERT(config.validation_context().verify_certificate_hash().size() <= 1);
-  if (!config.tls_certificates().empty()) {
-    // TODO(htuch): Support inline cert material delivery.
-    ASSERT(config.tls_certificates()[0].certificate_chain().specifier_case() ==
-           envoy::api::v2::DataSource::kFilename);
-    ASSERT(config.tls_certificates()[0].private_key().specifier_case() ==
-           envoy::api::v2::DataSource::kFilename);
+}
+
+const std::string ContextConfigImpl::readDataSource(const envoy::api::v2::DataSource& source,
+                                                    bool allow_empty) {
+  switch (source.specifier_case()) {
+  case envoy::api::v2::DataSource::kFilename:
+    return Filesystem::fileReadToEnd(source.filename());
+  case envoy::api::v2::DataSource::kInlineBytes:
+    return source.inline_bytes();
+  case envoy::api::v2::DataSource::kInlineString:
+    return source.inline_string();
+  default:
+    if (!allow_empty) {
+      throw EnvoyException(
+          fmt::format("Unexpected DataSource::specifier_case(): {}", source.specifier_case()));
+    }
+    return "";
   }
+}
+
+const std::string ContextConfigImpl::getDataSourcePath(const envoy::api::v2::DataSource& source) {
+  return source.specifier_case() == envoy::api::v2::DataSource::kFilename ? source.filename() : "";
+}
+
+unsigned
+ContextConfigImpl::tlsVersionFromProto(const envoy::api::v2::TlsParameters_TlsProtocol& version,
+                                       unsigned default_version) {
+  switch (version) {
+  case envoy::api::v2::TlsParameters::TLS_AUTO:
+    return default_version;
+  case envoy::api::v2::TlsParameters::TLSv1_0:
+    return TLS1_VERSION;
+  case envoy::api::v2::TlsParameters::TLSv1_1:
+    return TLS1_1_VERSION;
+  case envoy::api::v2::TlsParameters::TLSv1_2:
+    return TLS1_2_VERSION;
+  case envoy::api::v2::TlsParameters::TLSv1_3:
+    return TLS1_3_VERSION;
+  default:
+    NOT_IMPLEMENTED;
+  }
+
+  NOT_REACHED;
 }
 
 ClientContextConfigImpl::ClientContextConfigImpl(const envoy::api::v2::UpstreamTlsContext& config)
@@ -85,19 +134,7 @@ ServerContextConfigImpl::ServerContextConfigImpl(const envoy::api::v2::Downstrea
         switch (config.session_ticket_keys_type_case()) {
         case envoy::api::v2::DownstreamTlsContext::kSessionTicketKeys:
           for (const auto& datasource : config.session_ticket_keys().keys()) {
-            switch (datasource.specifier_case()) {
-            case envoy::api::v2::DataSource::kFilename: {
-              validateAndAppendKey(ret, Filesystem::fileReadToEnd(datasource.filename()));
-              break;
-            }
-            case envoy::api::v2::DataSource::kInline: {
-              validateAndAppendKey(ret, datasource.inline_());
-              break;
-            }
-            default:
-              throw EnvoyException(fmt::format("Unexpected DataSource::specifier_case(): {}",
-                                               datasource.specifier_case()));
-            }
+            validateAndAppendKey(ret, readDataSource(datasource, false));
           }
           break;
         case envoy::api::v2::DownstreamTlsContext::kSessionTicketKeysSdsSecretConfig:
@@ -113,6 +150,8 @@ ServerContextConfigImpl::ServerContextConfigImpl(const envoy::api::v2::Downstrea
         return ret;
       }()) {
   // TODO(PiotrSikora): Support multiple TLS certificates.
+  // TODO(mattklein123): All of the ASSERTs in this file need to be converted to exceptions with
+  //                     proper error handling.
   ASSERT(config.common_tls_context().tls_certificates().size() == 1);
 }
 
@@ -128,12 +167,12 @@ ServerContextConfigImpl::ServerContextConfigImpl(const Json::Object& config)
 void ServerContextConfigImpl::validateAndAppendKey(
     std::vector<ServerContextConfig::SessionTicketKey>& keys, const std::string& key_data) {
   // If this changes, need to figure out how to deal with key files
-  // that previously worked.  For now, just assert so we'll notice that
+  // that previously worked. For now, just assert so we'll notice that
   // it changed if it does.
   static_assert(sizeof(SessionTicketKey) == 80, "Input is expected to be this size");
 
   if (key_data.size() != sizeof(SessionTicketKey)) {
-    throw EnvoyException(fmt::format("Incorrect TLS session ticket key length.  "
+    throw EnvoyException(fmt::format("Incorrect TLS session ticket key length. "
                                      "Length {}, expected length {}.",
                                      key_data.size(), sizeof(SessionTicketKey)));
   }

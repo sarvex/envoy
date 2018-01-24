@@ -12,6 +12,16 @@
 namespace Envoy {
 namespace AccessLog {
 
+class MockFilter : public Filter {
+public:
+  MockFilter();
+  ~MockFilter();
+
+  // AccessLog::Filter
+  MOCK_METHOD2(evaluate,
+               bool(const RequestInfo::RequestInfo& info, const Http::HeaderMap& request_headers));
+};
+
 class MockAccessLogManager : public AccessLogManager {
 public:
   MockAccessLogManager();
@@ -22,6 +32,17 @@ public:
   MOCK_METHOD1(createAccessLog, Filesystem::FileSharedPtr(const std::string& file_name));
 
   std::shared_ptr<Filesystem::MockFile> file_{new testing::NiceMock<Filesystem::MockFile>()};
+};
+
+class MockInstance : public Instance {
+public:
+  MockInstance();
+  ~MockInstance();
+
+  // AccessLog::Instance
+  MOCK_METHOD3(log,
+               void(const Http::HeaderMap* request_headers, const Http::HeaderMap* response_headers,
+                    const RequestInfo::RequestInfo& request_info));
 };
 
 } // namespace AccessLog

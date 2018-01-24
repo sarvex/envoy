@@ -4,7 +4,7 @@
 
 #include "common/config/filter_json.h"
 #include "common/config/well_known_names.h"
-#include "common/http/access_log/access_log_impl.h"
+#include "common/json/json_loader.h"
 #include "common/protobuf/protobuf.h"
 #include "common/protobuf/utility.h"
 #include "common/router/router.h"
@@ -12,10 +12,11 @@
 #include "server/config/http/buffer.h"
 #include "server/config/http/dynamo.h"
 #include "server/config/http/fault.h"
-#include "server/config/http/file_access_log.h"
 #include "server/config/http/grpc_http1_bridge.h"
+#include "server/config/http/grpc_json_transcoder.h"
 #include "server/config/http/grpc_web.h"
 #include "server/config/http/ip_tagging.h"
+#include "server/config/http/lua.h"
 #include "server/config/http/ratelimit.h"
 #include "server/config/http/router.h"
 #include "server/config/http/zipkin_http_tracer.h"
@@ -38,7 +39,37 @@ namespace Envoy {
 namespace Server {
 namespace Configuration {
 
-TEST(HttpFilterConfigTest, BufferFilter) {
+// Negative test for protoc-gen-validate constraints.
+TEST(HttpFilterConfigTest, ValidateFail) {
+  NiceMock<MockFactoryContext> context;
+
+  BufferFilterConfig buffer_factory;
+  envoy::api::v2::filter::http::Buffer buffer_proto;
+  FaultFilterConfig fault_factory;
+  envoy::api::v2::filter::http::HTTPFault fault_proto;
+  fault_proto.mutable_abort();
+  GrpcJsonTranscoderFilterConfig grpc_json_transcoder_factory;
+  envoy::api::v2::filter::http::GrpcJsonTranscoder grpc_json_transcoder_proto;
+  LuaFilterConfig lua_factory;
+  envoy::api::v2::filter::http::Lua lua_proto;
+  RateLimitFilterConfig rate_limit_factory;
+  envoy::api::v2::filter::http::RateLimit rate_limit_proto;
+  const std::vector<std::pair<NamedHttpFilterConfigFactory&, Protobuf::Message&>> filter_cases = {
+      {buffer_factory, buffer_proto},
+      {fault_factory, fault_proto},
+      {grpc_json_transcoder_factory, grpc_json_transcoder_proto},
+      {lua_factory, lua_proto},
+      {rate_limit_factory, rate_limit_proto},
+  };
+
+  for (const auto& filter_case : filter_cases) {
+    EXPECT_THROW(
+        filter_case.first.createFilterFactoryFromProto(filter_case.second, "stats", context),
+        ProtoValidationException);
+  }
+}
+
+TEST(HttpFilterConfigTest, BufferFilterCorrectJson) {
   std::string json_string = R"EOF(
   {
     "max_request_bytes" : 1028,
@@ -55,7 +86,7 @@ TEST(HttpFilterConfigTest, BufferFilter) {
   cb(filter_callback);
 }
 
-TEST(HttpFilterConfigTest, BadBufferFilterConfig) {
+TEST(HttpFilterConfigTest, BufferFilterIncorrectJson) {
   std::string json_string = R"EOF(
   {
     "max_request_bytes" : 1028,
@@ -69,7 +100,35 @@ TEST(HttpFilterConfigTest, BadBufferFilterConfig) {
   EXPECT_THROW(factory.createFilterFactory(*json_config, "stats", context), Json::Exception);
 }
 
-TEST(HttpFilterConfigTest, RateLimitFilter) {
+TEST(HttpFilterConfigTest, BufferFilterCorrectProto) {
+  envoy::api::v2::filter::http::Buffer config{};
+  config.mutable_max_request_bytes()->set_value(1028);
+  config.mutable_max_request_time()->set_seconds(2);
+
+  NiceMock<MockFactoryContext> context;
+  BufferFilterConfig factory;
+  HttpFilterFactoryCb cb = factory.createFilterFactoryFromProto(config, "stats", context);
+  Http::MockFilterChainFactoryCallbacks filter_callback;
+  EXPECT_CALL(filter_callback, addStreamDecoderFilter(_));
+  cb(filter_callback);
+}
+
+TEST(HttpFilterConfigTest, BufferFilterEmptyProto) {
+  BufferFilterConfig factory;
+  envoy::api::v2::filter::http::Buffer config =
+      *dynamic_cast<envoy::api::v2::filter::http::Buffer*>(factory.createEmptyConfigProto().get());
+
+  config.mutable_max_request_bytes()->set_value(1028);
+  config.mutable_max_request_time()->set_seconds(2);
+
+  NiceMock<MockFactoryContext> context;
+  HttpFilterFactoryCb cb = factory.createFilterFactoryFromProto(config, "stats", context);
+  Http::MockFilterChainFactoryCallbacks filter_callback;
+  EXPECT_CALL(filter_callback, addStreamDecoderFilter(_));
+  cb(filter_callback);
+}
+
+TEST(HttpFilterConfigTest, RateLimitFilterCorrectJson) {
   std::string json_string = R"EOF(
   {
     "domain" : "test",
@@ -80,6 +139,49 @@ TEST(HttpFilterConfigTest, RateLimitFilter) {
   Json::ObjectSharedPtr json_config = Json::Factory::loadFromString(json_string);
   NiceMock<MockFactoryContext> context;
   RateLimitFilterConfig factory;
+  HttpFilterFactoryCb cb = factory.createFilterFactory(*json_config, "stats", context);
+  Http::MockFilterChainFactoryCallbacks filter_callback;
+  EXPECT_CALL(filter_callback, addStreamDecoderFilter(_));
+  cb(filter_callback);
+}
+
+TEST(HttpFilterConfigTest, RateLimitFilterCorrectProto) {
+  std::string json_string = R"EOF(
+  {
+    "domain" : "test",
+    "timeout_ms" : 1337
+  }
+  )EOF";
+
+  Json::ObjectSharedPtr json_config = Json::Factory::loadFromString(json_string);
+  envoy::api::v2::filter::http::RateLimit proto_config{};
+  Envoy::Config::FilterJson::translateHttpRateLimitFilter(*json_config, proto_config);
+
+  NiceMock<MockFactoryContext> context;
+  RateLimitFilterConfig factory;
+  HttpFilterFactoryCb cb = factory.createFilterFactoryFromProto(proto_config, "stats", context);
+  Http::MockFilterChainFactoryCallbacks filter_callback;
+  EXPECT_CALL(filter_callback, addStreamDecoderFilter(_));
+  cb(filter_callback);
+}
+
+TEST(HttpFilterConfigTest, RateLimitFilterEmptyProto) {
+  std::string json_string = R"EOF(
+  {
+    "domain" : "test",
+    "timeout_ms" : 1337
+  }
+  )EOF";
+
+  NiceMock<MockFactoryContext> context;
+  RateLimitFilterConfig factory;
+
+  Json::ObjectSharedPtr json_config = Json::Factory::loadFromString(json_string);
+  envoy::api::v2::filter::http::RateLimit proto_config =
+      *dynamic_cast<envoy::api::v2::filter::http::RateLimit*>(
+          factory.createEmptyConfigProto().get());
+  Envoy::Config::FilterJson::translateHttpRateLimitFilter(*json_config, proto_config);
+
   HttpFilterFactoryCb cb = factory.createFilterFactory(*json_config, "stats", context);
   Http::MockFilterChainFactoryCallbacks filter_callback;
   EXPECT_CALL(filter_callback, addStreamDecoderFilter(_));
@@ -115,7 +217,7 @@ TEST(HttpFilterConfigTest, DynamoFilter) {
   cb(filter_callback);
 }
 
-TEST(HttpFilterConfigTest, CorrectFaultFilterInJson) {
+TEST(HttpFilterConfigTest, FaultFilterCorrectJson) {
   std::string json_string = R"EOF(
   {
     "delay" : {
@@ -135,7 +237,7 @@ TEST(HttpFilterConfigTest, CorrectFaultFilterInJson) {
   cb(filter_callback);
 }
 
-TEST(HttpFilterConfigTest, CorrectFaultFilterInProto) {
+TEST(HttpFilterConfigTest, FaultFilterCorrectProto) {
   envoy::api::v2::filter::http::HTTPFault config{};
   config.mutable_delay()->set_percent(100);
   config.mutable_delay()->mutable_fixed_delay()->set_seconds(5);
@@ -155,7 +257,7 @@ TEST(HttpFilterConfigTest, InvalidFaultFilterInProto) {
   EXPECT_THROW(factory.createFilterFactoryFromProto(config, "stats", context), EnvoyException);
 }
 
-TEST(HttpFilterConfigTest, FaultFilterWithEmptyProto) {
+TEST(HttpFilterConfigTest, FaultFilterEmptyProto) {
   NiceMock<MockFactoryContext> context;
   FaultFilterConfig factory;
   EXPECT_THROW(
@@ -223,6 +325,22 @@ TEST(HttpFilterConfigTest, BadHealthCheckFilterConfig) {
   NiceMock<MockFactoryContext> context;
   HealthCheckFilterConfig factory;
   EXPECT_THROW(factory.createFilterFactory(*json_config, "stats", context), Json::Exception);
+}
+
+TEST(HttpFilterConfigTest, LuaFilterInJson) {
+  std::string json_string = R"EOF(
+  {
+    "inline_code" : "print(5)"
+  }
+  )EOF";
+
+  Json::ObjectSharedPtr json_config = Json::Factory::loadFromString(json_string);
+  NiceMock<MockFactoryContext> context;
+  LuaFilterConfig factory;
+  HttpFilterFactoryCb cb = factory.createFilterFactory(*json_config, "stats", context);
+  Http::MockFilterChainFactoryCallbacks filter_callback;
+  EXPECT_CALL(filter_callback, addStreamFilter(_));
+  cb(filter_callback);
 }
 
 TEST(HttpFilterConfigTest, RouterFilterInJson) {
@@ -344,28 +462,6 @@ TEST(HttpTracerConfigTest, DoubleRegistrationTest) {
   EXPECT_THROW_WITH_MESSAGE(
       (Registry::RegisterFactory<ZipkinHttpTracerFactory, HttpTracerFactory>()), EnvoyException,
       "Double registration for name: 'envoy.zipkin'");
-}
-
-TEST(AccessLogConfigTest, FileAccessLogTest) {
-  auto factory = Registry::FactoryRegistry<AccessLogInstanceFactory>::getFactory(
-      Config::AccessLogNames::get().FILE);
-  ASSERT_NE(nullptr, factory);
-
-  ProtobufTypes::MessagePtr message = factory->createEmptyConfigProto();
-  ASSERT_NE(nullptr, message);
-
-  envoy::api::v2::filter::FileAccessLog file_access_log;
-  file_access_log.set_path("/dev/null");
-  file_access_log.set_format("%START_TIME%");
-  MessageUtil::jsonConvert(file_access_log, *message);
-
-  Http::AccessLog::FilterPtr filter;
-  NiceMock<Server::Configuration::MockFactoryContext> context;
-
-  Http::AccessLog::InstanceSharedPtr instance =
-      factory->createAccessLogInstance(*message, std::move(filter), context);
-  EXPECT_NE(nullptr, instance);
-  EXPECT_NE(nullptr, dynamic_cast<Http::AccessLog::FileAccessLog*>(instance.get()));
 }
 
 } // namespace Configuration

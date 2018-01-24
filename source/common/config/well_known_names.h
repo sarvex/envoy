@@ -6,7 +6,7 @@
 
 #include "envoy/common/exception.h"
 
-#include "common/common/singleton.h"
+#include "common/singleton/const_singleton.h"
 
 #include "fmt/format.h"
 
@@ -46,6 +46,19 @@ public:
 private:
   std::unordered_map<std::string, std::string> v1_to_v2_names_;
 };
+
+/**
+ * Well-known listener filter names.
+ */
+class ListenerFilterNameValues {
+public:
+  // Original destination listener filter
+  const std::string ORIGINAL_DST = "envoy.listener.original_dst";
+  // Proxy Protocol listener filter
+  const std::string PROXY_PROTOCOL = "envoy.listener.proxy_protocol";
+};
+
+typedef ConstSingleton<ListenerFilterNameValues> ListenerFilterNames;
 
 /**
  * Well-known network filter names.
@@ -115,13 +128,15 @@ public:
   const std::string ROUTER = "envoy.router";
   // Health checking filter
   const std::string HEALTH_CHECK = "envoy.health_check";
+  // Lua filter
+  const std::string LUA = "envoy.lua";
 
   // Converts names from v1 to v2
   const V1Converter v1_converter_;
 
   HttpFilterNameValues()
       : v1_converter_({BUFFER, CORS, DYNAMO, FAULT, GRPC_HTTP1_BRIDGE, GRPC_JSON_TRANSCODER,
-                       GRPC_WEB, HEALTH_CHECK, IP_TAGGING, RATE_LIMIT, ROUTER}) {}
+                       GRPC_WEB, HEALTH_CHECK, IP_TAGGING, RATE_LIMIT, ROUTER, LUA}) {}
 };
 
 typedef ConstSingleton<HttpFilterNameValues> HttpFilterNames;
@@ -146,6 +161,10 @@ class StatsSinkNameValues {
 public:
   // Statsd sink
   const std::string STATSD = "envoy.statsd";
+  // DogStatsD compatible stastsd sink
+  const std::string DOG_STATSD = "envoy.dog_statsd";
+  // MetricsService sink
+  const std::string METRICS_SERVICE = "envoy.metrics_service";
 };
 
 typedef ConstSingleton<StatsSinkNameValues> StatsSinkNames;
@@ -157,6 +176,8 @@ class AccessLogNameValues {
 public:
   // File access log
   const std::string FILE = "envoy.file_access_log";
+  // HTTP gRPC access log
+  const std::string HTTP_GRPC = "envoy.http_grpc_access_log";
 };
 
 typedef ConstSingleton<AccessLogNameValues> AccessLogNames;
@@ -200,6 +221,8 @@ public:
   const std::string HTTP_USER_AGENT = "envoy.http_user_agent";
   // SSL cipher for a connection
   const std::string SSL_CIPHER = "envoy.ssl_cipher";
+  // SSL cipher suite
+  const std::string SSL_CIPHER_SUITE = "cipher_suite";
   // Stats prefix for the Client SSL Auth network filter
   const std::string CLIENTSSL_PREFIX = "envoy.clientssl_prefix";
   // Stats prefix for the Mongo Proxy network filter
@@ -247,6 +270,14 @@ private:
 };
 
 typedef ConstSingleton<TagNameValues> TagNames;
+
+class TransportSocketNameValues {
+public:
+  const std::string RAW_BUFFER = "raw_buffer";
+  const std::string SSL = "ssl";
+};
+
+typedef ConstSingleton<TransportSocketNameValues> TransportSocketNames;
 
 } // namespace Config
 } // namespace Envoy

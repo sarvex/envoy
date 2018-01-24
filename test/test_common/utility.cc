@@ -15,6 +15,7 @@
 #include "envoy/http/codec.h"
 
 #include "common/common/empty_string.h"
+#include "common/common/utility.h"
 #include "common/config/bootstrap_json.h"
 #include "common/json/json_loader.h"
 #include "common/network/address_impl.h"
@@ -22,6 +23,7 @@
 
 #include "test/test_common/printers.h"
 
+#include "absl/strings/string_view.h"
 #include "fmt/format.h"
 #include "gtest/gtest.h"
 
@@ -78,6 +80,18 @@ std::string TestUtility::bufferToString(const Buffer::Instance& buffer) {
   }
 
   return output;
+}
+
+void TestUtility::feedBufferWithRandomCharacters(Buffer::Instance& buffer, uint64_t n_char,
+                                                 uint64_t seed) {
+  const std::string sample = "Neque porro quisquam est qui dolorem ipsum..";
+  std::mt19937 generate(seed);
+  std::uniform_int_distribution<> distribute(1, sample.length() - 1);
+  std::string str{};
+  for (uint64_t n = 0; n < n_char; ++n) {
+    str += sample.at(distribute(generate));
+  }
+  buffer.add(str);
 }
 
 Stats::CounterSharedPtr TestUtility::findCounter(Stats::Store& store, const std::string& name) {
@@ -142,6 +156,19 @@ envoy::api::v2::Bootstrap TestUtility::parseBootstrapFromJson(const std::string&
   auto json_object_ptr = Json::Factory::loadFromString(json_string);
   Config::BootstrapJson::translateBootstrap(*json_object_ptr, bootstrap);
   return bootstrap;
+}
+
+std::vector<std::string> TestUtility::split(const std::string& source, char split) {
+  return TestUtility::split(source, std::string{split});
+}
+
+std::vector<std::string> TestUtility::split(const std::string& source, const std::string& split,
+                                            bool keep_empty_string) {
+  std::vector<std::string> ret;
+  const auto tokens_sv = StringUtil::splitToken(source, split, keep_empty_string);
+  std::transform(tokens_sv.begin(), tokens_sv.end(), std::back_inserter(ret),
+                 [](absl::string_view sv) { return std::string(sv); });
+  return ret;
 }
 
 void ConditionalInitializer::setReady() {

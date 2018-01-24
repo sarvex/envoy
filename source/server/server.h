@@ -86,6 +86,15 @@ public:
    */
   static void flushCountersAndGaugesToSinks(const std::list<Stats::SinkPtr>& sinks,
                                             Stats::Store& store);
+
+  /**
+   * Load a bootstrap config from either v1 or v2 and perform validation.
+   * @param bootstrap supplies the bootstrap to fill.
+   * @param config_path supplies the config path.
+   * @param v2_only supplies whether to attempt v1 fallback.
+   */
+  static void loadBootstrapConfig(envoy::api::v2::Bootstrap& bootstrap,
+                                  const std::string& config_path, bool v2_only);
 };
 
 /**
@@ -110,6 +119,9 @@ private:
  */
 class InstanceImpl : Logger::Loggable<Logger::Id::main>, public Instance {
 public:
+  /**
+   * @throw EnvoyException if initialization fails.
+   */
   InstanceImpl(Options& options, Network::Address::InstanceConstSharedPtr local_address,
                TestHooks& hooks, HotRestart& restarter, Stats::StoreRoot& store,
                Thread::BasicLockable& access_log_lock, ComponentFactory& component_factory,
@@ -165,7 +177,6 @@ private:
   const time_t start_time_;
   time_t original_start_time_;
   Stats::StoreRoot& stats_store_;
-  std::vector<Stats::TagExtractorPtr> tag_extractors_;
   std::unique_ptr<ServerStats> server_stats_;
   ThreadLocal::Instance& thread_local_;
   Api::ApiPtr api_;
@@ -180,7 +191,6 @@ private:
   ProdWorkerFactory worker_factory_;
   std::unique_ptr<ListenerManager> listener_manager_;
   std::unique_ptr<Configuration::Main> config_;
-  Stats::ScopePtr admin_scope_;
   Network::DnsResolverSharedPtr dns_resolver_;
   Event::TimerPtr stat_flush_timer_;
   LocalInfo::LocalInfoPtr local_info_;

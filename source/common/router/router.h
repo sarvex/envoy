@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <memory>
 #include <string>
-#include <tuple>
 
 #include "envoy/http/codec.h"
 #include "envoy/http/codes.h"
@@ -16,13 +15,13 @@
 #include "envoy/stats/stats_macros.h"
 #include "envoy/upstream/cluster_manager.h"
 
+#include "common/access_log/access_log_impl.h"
 #include "common/buffer/watermark_buffer.h"
 #include "common/common/hash.h"
 #include "common/common/hex.h"
 #include "common/common/logger.h"
-#include "common/http/access_log/access_log_impl.h"
-#include "common/http/access_log/request_info_impl.h"
 #include "common/http/utility.h"
+#include "common/request_info/request_info_impl.h"
 
 #include "api/filter/http/router.pb.h"
 
@@ -37,6 +36,7 @@ namespace Router {
   COUNTER(no_route)                                                                                \
   COUNTER(no_cluster)                                                                              \
   COUNTER(rq_redirect)                                                                             \
+  COUNTER(rq_direct_response)                                                                      \
   COUNTER(rq_total)
 // clang-format on
 
@@ -103,7 +103,7 @@ public:
                      PROTOBUF_GET_WRAPPED_OR_DEFAULT(config, dynamic_stats, true),
                      config.start_child_span()) {
     for (const auto& upstream_log : config.upstream_log()) {
-      upstream_logs_.push_back(Http::AccessLog::AccessLogFactory::fromProto(upstream_log, context));
+      upstream_logs_.push_back(AccessLog::AccessLogFactory::fromProto(upstream_log, context));
     }
   }
 
@@ -117,7 +117,7 @@ public:
   FilterStats stats_;
   const bool emit_dynamic_stats_;
   const bool start_child_span_;
-  std::list<Http::AccessLog::InstanceSharedPtr> upstream_logs_;
+  std::list<AccessLog::InstanceSharedPtr> upstream_logs_;
 
 private:
   ShadowWriterPtr shadow_writer_;
@@ -153,7 +153,7 @@ public:
       auto hash_policy = route_entry_->hashPolicy();
       if (hash_policy) {
         return hash_policy->generateHash(
-            callbacks_->downstreamAddress(), *downstream_headers_,
+            callbacks_->requestInfo().downstreamRemoteAddress()->asString(), *downstream_headers_,
             [this](const std::string& key, std::chrono::seconds max_age) {
               return addDownstreamSetCookie(key, max_age);
             });
@@ -184,8 +184,8 @@ public:
     // connections can receive different cookies if they race on requests.
     std::string value;
     const Network::Connection* conn = downstreamConnection();
-    // need to check for null conn if this is ever used by Http::AsyncClient in the fiture
-    value = conn->remoteAddress().asString() + conn->localAddress().asString();
+    // Need to check for null conn if this is ever used by Http::AsyncClient in the future.
+    value = conn->remoteAddress()->asString() + conn->localAddress()->asString();
 
     const std::string cookie_value = Hex::uint64ToHex(HashUtil::xxHash64(value));
     downstream_set_cookies_.emplace_back(
@@ -267,7 +267,7 @@ private:
     Upstream::HostDescriptionConstSharedPtr upstream_host_;
     DownstreamWatermarkManager downstream_watermark_manager_{*this};
     Tracing::SpanPtr span_;
-    Http::AccessLog::RequestInfoImpl request_info_;
+    RequestInfo::RequestInfoImpl request_info_;
     Http::HeaderMap* upstream_headers_{};
 
     bool calling_encode_headers_ : 1;
@@ -280,8 +280,7 @@ private:
 
   enum class UpstreamResetType { Reset, GlobalTimeout, PerTryTimeout };
 
-  Http::AccessLog::ResponseFlag
-  streamResetReasonToResponseFlag(Http::StreamResetReason reset_reason);
+  RequestInfo::ResponseFlag streamResetReasonToResponseFlag(Http::StreamResetReason reset_reason);
 
   static const std::string upstreamZone(Upstream::HostDescriptionConstSharedPtr upstream_host);
   void chargeUpstreamCode(uint64_t response_status_code, const Http::HeaderMap& response_headers,

@@ -17,6 +17,7 @@
 #include "common/network/utility.h"
 #include "common/protobuf/utility.h"
 
+#include "absl/strings/string_view.h"
 #include "fmt/format.h"
 
 namespace Envoy {
@@ -56,11 +57,12 @@ Utility::QueryParams Utility::parseQueryString(const std::string& url) {
     if (end == std::string::npos) {
       end = url.size();
     }
+    absl::string_view param(url.c_str() + start, end - start);
 
-    size_t equal = url.find('=', start);
+    const size_t equal = param.find('=');
     if (equal != std::string::npos) {
-      params.emplace(StringUtil::subspan(url, start, equal),
-                     StringUtil::subspan(url, equal + 1, end));
+      params.emplace(StringUtil::subspan(url, start, start + equal),
+                     StringUtil::subspan(url, start + equal + 1, end));
     } else {
       params.emplace(StringUtil::subspan(url, start, end), "");
     }
@@ -90,7 +92,7 @@ std::string Utility::parseCookieValue(const HeaderMap& headers, const std::strin
         // Find the cookie headers in the request (typically, there's only one).
         if (header.key() == Http::Headers::get().Cookie.get().c_str()) {
           // Split the cookie header into individual cookies.
-          for (const std::string& s : StringUtil::split(std::string{header.value().c_str()}, ';')) {
+          for (const auto s : StringUtil::splitToken(header.value().c_str(), ";")) {
             // Find the key part of the cookie (i.e. the name of the cookie).
             size_t first_non_space = s.find_first_not_of(" ");
             size_t equals_index = s.find('=');
@@ -99,18 +101,18 @@ std::string Utility::parseCookieValue(const HeaderMap& headers, const std::strin
               // checking other cookies in this header.
               continue;
             }
-            std::string k = s.substr(first_non_space, equals_index - first_non_space);
+            const absl::string_view k = s.substr(first_non_space, equals_index - first_non_space);
             State* state = static_cast<State*>(context);
             // If the key matches, parse the value from the rest of the cookie string.
             if (k == state->key_) {
-              std::string v = s.substr(equals_index + 1, s.size() - 1);
+              absl::string_view v = s.substr(equals_index + 1, s.size() - 1);
 
               // Cookie values may be wrapped in double quotes.
               // https://tools.ietf.org/html/rfc6265#section-4.1.1
               if (v.size() >= 2 && v.back() == '"' && v[0] == '"') {
                 v = v.substr(1, v.size() - 2);
               }
-              state->ret_ = v;
+              state->ret_ = std::string{v};
               return HeaderMap::Iterate::Break;
             }
           }
@@ -173,21 +175,12 @@ uint64_t Utility::getResponseStatus(const HeaderMap& headers) {
   return response_code;
 }
 
-bool Utility::isInternalRequest(const HeaderMap& headers) {
-  // The current header
-  const HeaderEntry* forwarded_for = headers.ForwardedFor();
-  if (!forwarded_for) {
-    return false;
-  }
-
-  return Network::Utility::isInternalAddress(forwarded_for->value().c_str());
-}
-
 bool Utility::isWebSocketUpgradeRequest(const HeaderMap& headers) {
+  // In firefox the "Connection" request header value is "keep-alive, Upgrade",
+  // we should check if it contains the "Upgrade" token.
   return (headers.Connection() && headers.Upgrade() &&
-          (0 == StringUtil::caseInsensitiveCompare(
-                    headers.Connection()->value().c_str(),
-                    Http::Headers::get().ConnectionValues.Upgrade.c_str())) &&
+          headers.Connection()->value().caseInsensitiveContains(
+              Http::Headers::get().ConnectionValues.Upgrade.c_str()) &&
           (0 == StringUtil::caseInsensitiveCompare(
                     headers.Upgrade()->value().c_str(),
                     Http::Headers::get().UpgradeValues.WebSocket.c_str())));
@@ -243,26 +236,40 @@ void Utility::sendLocalReply(
   }
 }
 
-void Utility::sendRedirect(StreamDecoderFilterCallbacks& callbacks, const std::string& new_path) {
+void Utility::sendRedirect(StreamDecoderFilterCallbacks& callbacks, const std::string& new_path,
+                           Code response_code) {
   HeaderMapPtr response_headers{
-      new HeaderMapImpl{{Headers::get().Status, std::to_string(enumToInt(Code::MovedPermanently))},
+      new HeaderMapImpl{{Headers::get().Status, std::to_string(enumToInt(response_code))},
                         {Headers::get().Location, new_path}}};
 
   callbacks.encodeHeaders(std::move(response_headers), true);
 }
 
-std::string Utility::getLastAddressFromXFF(const Http::HeaderMap& request_headers) {
-  if (!request_headers.ForwardedFor()) {
-    return EMPTY_STRING;
+Utility::GetLastAddressFromXffInfo
+Utility::getLastAddressFromXFF(const Http::HeaderMap& request_headers) {
+  const auto xff_header = request_headers.ForwardedFor();
+  if (xff_header == nullptr) {
+    return {nullptr, false};
   }
 
-  std::vector<std::string> xff_address_list =
-      StringUtil::split(request_headers.ForwardedFor()->value().c_str(), ", ");
-
-  if (xff_address_list.empty()) {
-    return EMPTY_STRING;
+  absl::string_view xff_string(xff_header->value().c_str(), xff_header->value().size());
+  static const std::string seperator(", ");
+  std::string::size_type last_comma = xff_string.rfind(seperator);
+  if (last_comma != std::string::npos && last_comma + seperator.size() < xff_string.size()) {
+    xff_string = xff_string.substr(last_comma + seperator.size());
   }
-  return xff_address_list.back();
+
+  try {
+    // This technically requires a copy because inet_pton takes a null terminated string. In
+    // practice, we are working with a view at the end of the owning string, and could pass the
+    // raw pointer.
+    // TODO(mattklein123 PERF: Avoid the copy here.
+    return {
+        Network::Utility::parseInternetAddress(std::string(xff_string.data(), xff_string.size())),
+        last_comma == std::string::npos};
+  } catch (const EnvoyException&) {
+    return {nullptr, false};
+  }
 }
 
 } // namespace Http

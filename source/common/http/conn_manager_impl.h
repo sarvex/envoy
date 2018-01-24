@@ -8,8 +8,8 @@
 #include <string>
 #include <vector>
 
+#include "envoy/access_log/access_log.h"
 #include "envoy/event/deferred_deletable.h"
-#include "envoy/http/access_log.h"
 #include "envoy/http/codec.h"
 #include "envoy/http/filter.h"
 #include "envoy/http/websocket.h"
@@ -25,10 +25,10 @@
 
 #include "common/buffer/watermark_buffer.h"
 #include "common/common/linked_object.h"
-#include "common/http/access_log/request_info_impl.h"
 #include "common/http/date_provider.h"
 #include "common/http/user_agent.h"
 #include "common/http/websocket/ws_handler_impl.h"
+#include "common/request_info/request_info_impl.h"
 #include "common/tracing/http_tracer_impl.h"
 
 namespace Envoy {
@@ -355,9 +355,9 @@ private:
     Router::RouteConstSharedPtr route() override;
     void clearRouteCache() override;
     uint64_t streamId() override;
-    AccessLog::RequestInfo& requestInfo() override;
+    RequestInfo::RequestInfo& requestInfo() override;
     Tracing::Span& activeSpan() override;
-    const std::string& downstreamAddress() override;
+    Tracing::Config& tracingConfig() override;
 
     ActiveStream& parent_;
     bool headers_continued_ : 1;
@@ -519,7 +519,7 @@ private:
       addStreamDecoderFilterWorker(filter, true);
       addStreamEncoderFilterWorker(filter, true);
     }
-    void addAccessLogHandler(Http::AccessLog::InstanceSharedPtr handler) override;
+    void addAccessLogHandler(AccessLog::InstanceSharedPtr handler) override;
 
     // Http::WsHandlerCallbacks
     void sendHeadersOnlyResponse(HeaderMap& headers) override {
@@ -532,7 +532,9 @@ private:
 
     void traceRequest();
 
-    // Pass on watermark callbacks to watermark subscribers.  This boils down to passing watermark
+    void refreshCachedRoute();
+
+    // Pass on watermark callbacks to watermark subscribers. This boils down to passing watermark
     // events for this stream and the downstream connection to the router filter.
     void callHighWatermarkCallbacks();
     void callLowWatermarkCallbacks();
@@ -557,7 +559,7 @@ private:
 
       uint32_t filter_call_state_{0};
       // The following 3 members are booleans rather than part of the space-saving bitfield as they
-      // are passed as arguments to functions expecting bools.  Extend State using the bitfield
+      // are passed as arguments to functions expecting bools. Extend State using the bitfield
       // where possible.
       bool encoder_filters_streaming_{true};
       bool decoder_filters_streaming_{true};
@@ -583,10 +585,10 @@ private:
     HeaderMapPtr request_trailers_;
     std::list<ActiveStreamDecoderFilterPtr> decoder_filters_;
     std::list<ActiveStreamEncoderFilterPtr> encoder_filters_;
-    std::list<Http::AccessLog::InstanceSharedPtr> access_log_handlers_;
+    std::list<AccessLog::InstanceSharedPtr> access_log_handlers_;
     Stats::TimespanPtr request_timer_;
     State state_;
-    AccessLog::RequestInfoImpl request_info_;
+    RequestInfo::RequestInfoImpl request_info_;
     Optional<Router::RouteConstSharedPtr> cached_route_;
     DownstreamWatermarkCallbacks* watermark_callbacks_{nullptr};
     uint32_t buffer_limit_{0};

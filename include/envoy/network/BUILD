@@ -62,8 +62,18 @@ envoy_cc_library(
 )
 
 envoy_cc_library(
+    name = "transport_socket_interface",
+    hdrs = ["transport_socket.h"],
+    deps = [
+        ":connection_interface",
+        "//include/envoy/ssl:connection_interface",
+    ],
+)
+
+envoy_cc_library(
     name = "listener_interface",
     hdrs = ["listener.h"],
+    deps = ["//include/envoy/network:listen_socket_interface"],
 )
 
 envoy_cc_library(

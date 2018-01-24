@@ -22,8 +22,8 @@
 
 #include "common/common/empty_string.h"
 #include "common/common/linked_object.h"
-#include "common/http/access_log/request_info_impl.h"
 #include "common/http/message_impl.h"
+#include "common/request_info/request_info_impl.h"
 #include "common/router/router.h"
 #include "common/tracing/http_tracer_impl.h"
 
@@ -142,9 +142,13 @@ private:
 
     // Router::RouteEntry
     const std::string& clusterName() const override { return cluster_name_; }
+    Http::Code clusterNotFoundResponseCode() const override {
+      return Http::Code::InternalServerError;
+    }
     const Router::CorsPolicy* corsPolicy() const override { return nullptr; }
-    void finalizeRequestHeaders(Http::HeaderMap&,
-                                const Http::AccessLog::RequestInfo&) const override {}
+    void finalizeRequestHeaders(Http::HeaderMap&, const RequestInfo::RequestInfo&) const override {}
+    void finalizeResponseHeaders(Http::HeaderMap&, const RequestInfo::RequestInfo&) const override {
+    }
     const Router::HashPolicy* hashPolicy() const override { return nullptr; }
     const Router::MetadataMatchCriteria* metadataMatchCriteria() const override { return nullptr; }
     Upstream::ResourcePriority priority() const override {
@@ -170,12 +174,14 @@ private:
     bool autoHostRewrite() const override { return false; }
     bool useWebSocket() const override { return false; }
     bool includeVirtualHostRateLimits() const override { return true; }
+    const envoy::api::v2::Metadata& metadata() const override { return metadata_; }
 
     static const NullRateLimitPolicy rate_limit_policy_;
     static const NullRetryPolicy retry_policy_;
     static const NullShadowPolicy shadow_policy_;
     static const NullVirtualHost virtual_host_;
     static const std::multimap<std::string, std::string> opaque_config_;
+    static const envoy::api::v2::Metadata metadata_;
 
     const std::string& cluster_name_;
     Optional<std::chrono::milliseconds> timeout_;
@@ -186,7 +192,7 @@ private:
         : route_entry_(cluster_name, timeout) {}
 
     // Router::Route
-    const Router::RedirectEntry* redirectEntry() const override { return nullptr; }
+    const Router::DirectResponseEntry* directResponseEntry() const override { return nullptr; }
     const Router::RouteEntry* routeEntry() const override { return &route_entry_; }
     const Router::Decorator* decorator() const override { return nullptr; }
 
@@ -205,9 +211,9 @@ private:
   Router::RouteConstSharedPtr route() override { return route_; }
   void clearRouteCache() override {}
   uint64_t streamId() override { return stream_id_; }
-  AccessLog::RequestInfo& requestInfo() override { return request_info_; }
+  RequestInfo::RequestInfo& requestInfo() override { return request_info_; }
   Tracing::Span& activeSpan() override { return active_span_; }
-  const std::string& downstreamAddress() override { return EMPTY_STRING; }
+  const Tracing::Config& tracingConfig() override { return tracing_config_; }
   void continueDecoding() override { NOT_IMPLEMENTED; }
   void addDecodedData(Buffer::Instance&, bool) override { NOT_IMPLEMENTED; }
   const Buffer::Instance* decodingBuffer() override { return buffered_body_.get(); }
@@ -224,8 +230,9 @@ private:
   AsyncClient::StreamCallbacks& stream_callbacks_;
   const uint64_t stream_id_;
   Router::ProdFilter router_;
-  AccessLog::RequestInfoImpl request_info_;
+  RequestInfo::RequestInfoImpl request_info_;
   Tracing::NullSpan active_span_;
+  const Tracing::Config& tracing_config_;
   std::shared_ptr<RouteImpl> route_;
   bool local_closed_{};
   bool remote_closed_{};

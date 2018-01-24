@@ -24,6 +24,7 @@
 #include "server/lds_api.h"
 
 #include "api/bootstrap.pb.h"
+#include "api/trace.pb.h"
 
 namespace Envoy {
 namespace Server {
@@ -38,9 +39,9 @@ public:
   virtual ~HttpTracerFactory() {}
 
   /**
-   * Create a particular HttpTracer implementation.  If the implementation is unable to produce an
+   * Create a particular HttpTracer implementation. If the implementation is unable to produce an
    * HttpTracer with the provided parameters, it should throw an EnvoyException in the case of
-   * general error or a Json::Exception if the json configuration is erroneous.  The returned
+   * general error or a Json::Exception if the json configuration is erroneous. The returned
    * pointer should always be valid.
    * @param json_config supplies the general json configuration for the HttpTracer
    * @param server supplies the server instance
@@ -98,6 +99,13 @@ public:
    */
   static bool buildFilterChain(Network::FilterManager& filter_manager,
                                const std::vector<NetworkFilterFactoryCb>& factories);
+
+  /**
+   * Given a ListenerFilterManager and a list of factories, create a new filter chain. Chain
+   * creation will exit early if any filters immediately close the connection.
+   */
+  static bool buildFilterChain(Network::ListenerFilterManager& filter_manager,
+                               const std::vector<ListenerFilterFactoryCb>& factories);
 };
 
 /**

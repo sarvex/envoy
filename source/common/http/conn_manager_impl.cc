@@ -194,7 +194,7 @@ StreamDecoder& ConnectionManagerImpl::newStream(StreamEncoder& response_encoder)
 
 Network::FilterStatus ConnectionManagerImpl::onData(Buffer::Instance& data) {
   // Send the data through WebSocket handlers if this connection is a
-  // WebSocket connection.  N.B. The first request from the client to Envoy
+  // WebSocket connection. N.B. The first request from the client to Envoy
   // will still be processed as a normal HTTP/1.1 request, where Envoy will
   // detect the WebSocket upgrade and establish a connection to the
   // upstream.
@@ -392,7 +392,7 @@ void ConnectionManagerImpl::ActiveStream::addStreamEncoderFilterWorker(
 }
 
 void ConnectionManagerImpl::ActiveStream::addAccessLogHandler(
-    Http::AccessLog::InstanceSharedPtr handler) {
+    AccessLog::InstanceSharedPtr handler) {
   access_log_handlers_.push_back(handler);
 }
 
@@ -472,7 +472,7 @@ void ConnectionManagerImpl::ActiveStream::decodeHeaders(HeaderMapPtr&& headers, 
   // header size. For HTTP/1.1 the entire headers data has be less than ~80K (hard coded in
   // http_parser). For HTTP/2 the default allowed header block length is 64k.
   // In order to have generally uniform behavior we also check total header size here and keep it
-  // under 60K.  Ultimately it would be nice to have a configuration option ranging from the largest
+  // under 60K. Ultimately it would be nice to have a configuration option ranging from the largest
   // header size http_parser and nghttp2 will allow, down to 16k or 8k for
   // envoy users who do not wish to proxy large headers.
   if (request_headers_->byteSize() > (60 * 1024)) {
@@ -501,18 +501,21 @@ void ConnectionManagerImpl::ActiveStream::decodeHeaders(HeaderMapPtr&& headers, 
     state_.saw_connection_close_ = true;
   }
 
-  ConnectionManagerUtility::mutateRequestHeaders(
+  request_info_.downstream_local_address_ =
+      connection_manager_.read_callbacks_->connection().localAddress();
+  request_info_.downstream_remote_address_ = ConnectionManagerUtility::mutateRequestHeaders(
       *request_headers_, protocol, connection_manager_.read_callbacks_->connection(),
       connection_manager_.config_, *snapped_route_config_, connection_manager_.random_generator_,
       connection_manager_.runtime_, connection_manager_.local_info_);
+  ASSERT(request_info_.downstream_remote_address_ != nullptr);
 
   ASSERT(!cached_route_.valid());
-  cached_route_.value(snapped_route_config_->route(*request_headers_, stream_id_));
+  refreshCachedRoute();
 
   // Check for WebSocket upgrade request if the route exists, and supports WebSockets.
   // TODO if there are no filters when starting a filter iteration, the connection manager
   // should return 404. The current returns no response if there is no router filter.
-  if ((protocol == Protocol::Http11) && cached_route_.value()) {
+  if (protocol == Protocol::Http11 && cached_route_.value()) {
     const Router::RouteEntry* route_entry = cached_route_.value()->routeEntry();
     const bool websocket_allowed = (route_entry != nullptr) && route_entry->useWebSocket();
     const bool websocket_requested = Utility::isWebSocketUpgradeRequest(*request_headers_);
@@ -543,8 +546,6 @@ void ConnectionManagerImpl::ActiveStream::decodeHeaders(HeaderMapPtr&& headers, 
     traceRequest();
   }
 
-  // Set the trusted address for the connection by taking the last address in XFF.
-  request_info_.downstream_address_ = Utility::getLastAddressFromXFF(*request_headers_);
   decodeHeaders(nullptr, *request_headers_, end_stream);
 }
 
@@ -764,6 +765,12 @@ void ConnectionManagerImpl::startDrainSequence() {
   drain_timer_->enableTimer(config_.drainTimeout());
 }
 
+void ConnectionManagerImpl::ActiveStream::refreshCachedRoute() {
+  Router::RouteConstSharedPtr route = snapped_route_config_->route(*request_headers_, stream_id_);
+  request_info_.route_entry_ = route ? route->routeEntry() : nullptr;
+  cached_route_.value(std::move(route));
+}
+
 void ConnectionManagerImpl::ActiveStream::encodeHeaders(ActiveStreamEncoderFilter* filter,
                                                         HeaderMap& headers, bool end_stream) {
   std::list<ActiveStreamEncoderFilterPtr>::iterator entry = commonEncodePrefix(filter, end_stream);
@@ -792,8 +799,7 @@ void ConnectionManagerImpl::ActiveStream::encodeHeaders(ActiveStreamEncoderFilte
   connection_manager_.config_.dateProvider().setDateHeader(headers);
   // Following setReference() is safe because serverName() is constant for the life of the listener.
   headers.insertServer().value().setReference(connection_manager_.config_.serverName());
-  ConnectionManagerUtility::mutateResponseHeaders(headers, *request_headers_,
-                                                  *snapped_route_config_);
+  ConnectionManagerUtility::mutateResponseHeaders(headers, *request_headers_);
 
   // See if we want to drain/close the connection. Send the go away frame prior to encoding the
   // header block.
@@ -1133,7 +1139,7 @@ Event::Dispatcher& ConnectionManagerImpl::ActiveStreamFilterBase::dispatcher() {
   return parent_.connection_manager_.read_callbacks_->connection().dispatcher();
 }
 
-AccessLog::RequestInfo& ConnectionManagerImpl::ActiveStreamFilterBase::requestInfo() {
+RequestInfo::RequestInfo& ConnectionManagerImpl::ActiveStreamFilterBase::requestInfo() {
   return parent_.request_info_;
 }
 
@@ -1145,10 +1151,11 @@ Tracing::Span& ConnectionManagerImpl::ActiveStreamFilterBase::activeSpan() {
   }
 }
 
+Tracing::Config& ConnectionManagerImpl::ActiveStreamFilterBase::tracingConfig() { return parent_; }
+
 Router::RouteConstSharedPtr ConnectionManagerImpl::ActiveStreamFilterBase::route() {
   if (!parent_.cached_route_.valid()) {
-    parent_.cached_route_.value(
-        parent_.snapped_route_config_->route(*parent_.request_headers_, parent_.stream_id_));
+    parent_.refreshCachedRoute();
   }
 
   return parent_.cached_route_.value();
@@ -1304,10 +1311,6 @@ void ConnectionManagerImpl::ActiveStreamFilterBase::resetStream() {
 }
 
 uint64_t ConnectionManagerImpl::ActiveStreamFilterBase::streamId() { return parent_.stream_id_; }
-
-const std::string& ConnectionManagerImpl::ActiveStreamFilterBase::downstreamAddress() {
-  return parent_.request_info_.getDownstreamAddress();
-}
 
 } // namespace Http
 } // namespace Envoy

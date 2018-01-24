@@ -29,7 +29,7 @@ namespace Envoy {
 namespace Router {
 namespace {
 
-Optional<envoy::api::v2::filter::AccessLog> testUpstreamLog() {
+Optional<envoy::api::v2::filter::accesslog::AccessLog> testUpstreamLog() {
   // Custom format without timestamps or durations.
   const std::string json_string = R"EOF(
   {
@@ -40,10 +40,10 @@ Optional<envoy::api::v2::filter::AccessLog> testUpstreamLog() {
 
   auto json_object_ptr = Json::Factory::loadFromString(json_string);
 
-  envoy::api::v2::filter::AccessLog upstream_log;
+  envoy::api::v2::filter::accesslog::AccessLog upstream_log;
   Envoy::Config::FilterJson::translateAccessLog(*json_object_ptr, upstream_log);
 
-  return Optional<envoy::api::v2::filter::AccessLog>(upstream_log);
+  return Optional<envoy::api::v2::filter::accesslog::AccessLog>(upstream_log);
 }
 
 } // namespace
@@ -73,14 +73,15 @@ class RouterUpstreamLogTest : public testing::Test {
 public:
   RouterUpstreamLogTest() {}
 
-  void init(Optional<envoy::api::v2::filter::AccessLog> upstream_log) {
+  void init(Optional<envoy::api::v2::filter::accesslog::AccessLog> upstream_log) {
     envoy::api::v2::filter::http::Router router_proto;
 
     if (upstream_log.valid()) {
       ON_CALL(*context_.access_log_manager_.file_, write(_))
           .WillByDefault(Invoke([&](const std::string& data) { output_.push_back(data); }));
 
-      envoy::api::v2::filter::AccessLog* current_upstream_log = router_proto.add_upstream_log();
+      envoy::api::v2::filter::accesslog::AccessLog* current_upstream_log =
+          router_proto.add_upstream_log();
       current_upstream_log->CopyFrom(upstream_log.value());
     }
 
@@ -95,10 +96,9 @@ public:
         .WillByDefault(Return(host_address_));
     ON_CALL(*context_.cluster_manager_.conn_pool_.host_, locality())
         .WillByDefault(ReturnRef(upstream_locality_));
-    ON_CALL(router_->downstream_connection_, localAddress())
-        .WillByDefault(ReturnRef(*host_address_));
-    ON_CALL(router_->downstream_connection_, remoteAddress())
-        .WillByDefault(ReturnRef(*remote_address_));
+    router_->downstream_connection_.local_address_ = host_address_;
+    router_->downstream_connection_.remote_address_ =
+        Network::Utility::parseInternetAddressAndPort("1.2.3.4:80");
   }
 
   void expectResponseTimerCreate() {
@@ -199,8 +199,6 @@ public:
   envoy::api::v2::Locality upstream_locality_;
   Network::Address::InstanceConstSharedPtr host_address_{
       Network::Utility::resolveUrl("tcp://10.0.0.5:9211")};
-  Network::Address::InstanceConstSharedPtr remote_address_{
-      Network::Utility::parseInternetAddressAndPort("1.2.3.4:80")};
   Event::MockTimer* response_timeout_{};
   Event::MockTimer* per_try_timeout_{};
 

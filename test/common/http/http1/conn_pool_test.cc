@@ -90,7 +90,7 @@ public:
                                                        },
                                                        nullptr);
 
-    EXPECT_CALL(mock_dispatcher_, createClientConnection_(_, _))
+    EXPECT_CALL(mock_dispatcher_, createClientConnection_(_, _, _))
         .WillOnce(Return(test_client.connection_));
     EXPECT_CALL(*this, createCodecClient_()).WillOnce(Return(test_client.codec_client_));
     EXPECT_CALL(*test_client.connect_timer_, enableTimer(_));
@@ -183,10 +183,36 @@ struct ActiveTestRequest {
 };
 
 /**
+ * Verify that connections are drained when requested.
+ */
+TEST_F(Http1ConnPoolImplTest, DrainConnections) {
+  cluster_->resource_manager_.reset(
+      new Upstream::ResourceManagerImpl(runtime_, "fake_key", 2, 1024, 1024, 1));
+  InSequence s;
+
+  ActiveTestRequest r1(*this, 0, ActiveTestRequest::Type::CreateConnection);
+  r1.startRequest();
+
+  ActiveTestRequest r2(*this, 1, ActiveTestRequest::Type::CreateConnection);
+  r2.startRequest();
+
+  r1.completeResponse(false);
+
+  // This will destroy the ready client and set requests remaining to 1 on the busy client.
+  conn_pool_.drainConnections();
+  EXPECT_CALL(conn_pool_, onClientDestroy());
+  dispatcher_.clearDeferredDeleteList();
+
+  // This will destroy the busy client when the response finishes.
+  r2.completeResponse(false);
+  EXPECT_CALL(conn_pool_, onClientDestroy());
+  dispatcher_.clearDeferredDeleteList();
+}
+
+/**
  * Test all timing stats are set.
  */
 TEST_F(Http1ConnPoolImplTest, VerifyTimingStats) {
-
   EXPECT_CALL(cluster_->stats_store_,
               deliverHistogramToSinks(Property(&Stats::Metric::name, "upstream_cx_connect_ms"), _));
   EXPECT_CALL(cluster_->stats_store_,

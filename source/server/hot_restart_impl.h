@@ -8,15 +8,17 @@
 #include <cstdint>
 #include <string>
 
-#include "envoy/api/os_sys_calls.h"
 #include "envoy/server/hot_restart.h"
 #include "envoy/server/options.h"
 
 #include "common/common/assert.h"
+#include "common/common/shared_memory_hash_set.h"
 #include "common/stats/stats_impl.h"
 
 namespace Envoy {
 namespace Server {
+
+typedef SharedMemoryHashSet<Stats::RawStatData> RawStatDataSet;
 
 /**
  * Shared memory segment. This structure is laid directly into shared memory and is used amongst
@@ -26,14 +28,18 @@ class SharedMemory {
 public:
   static void configure(size_t max_num_stats, size_t max_stat_name_len);
   static std::string version(uint64_t max_num_stats, uint64_t max_stat_name_len);
-  std::string version();
+
+  // Made public for testing.
+  static const uint64_t VERSION;
+
+  int64_t maxStats() const { return max_stats_; }
 
 private:
   struct Flags {
     static const uint64_t INITIALIZING = 0x1;
   };
 
-  // Due to the flexible-array-length of stats_slots_, c-style allocation
+  // Due to the flexible-array-length of stats_set_data_, c-style allocation
   // and initialization are neccessary.
   SharedMemory() = delete;
   ~SharedMemory() = delete;
@@ -42,27 +48,23 @@ private:
    * Initialize the shared memory segment, depending on whether we should be the first running
    * envoy, or a host restarted envoy process.
    */
-  static SharedMemory& initialize(Options& options, Api::OsSysCalls& os_sys_calls);
+  static SharedMemory& initialize(uint32_t stats_set_size, Options& options);
 
   /**
    * Initialize a pthread mutex for process shared locking.
    */
   void initializeMutex(pthread_mutex_t& mutex);
 
-  static const uint64_t VERSION;
-
   uint64_t size_;
   uint64_t version_;
-  uint64_t num_stats_;
+  uint64_t max_stats_;
   uint64_t entry_size_;
   std::atomic<uint64_t> flags_;
   pthread_mutex_t log_lock_;
   pthread_mutex_t access_log_lock_;
   pthread_mutex_t stat_lock_;
   pthread_mutex_t init_lock_;
-  alignas(Stats::RawStatData) uint8_t
-      stats_slots_[]; // array of Stats::RawStatData, which has a flexible-array-length member
-                      // so non-fixed size
+  alignas(SharedMemoryHashSet<Stats::RawStatData>) uint8_t stats_set_data_[];
 
   friend class HotRestartImpl;
 };
@@ -116,7 +118,7 @@ class HotRestartImpl : public HotRestart,
                        public Stats::RawStatDataAllocator,
                        Logger::Loggable<Logger::Id::main> {
 public:
-  HotRestartImpl(Options& options, Api::OsSysCalls& os_sys_calls);
+  HotRestartImpl(Options& options);
 
   Thread::BasicLockable& logLock() { return log_lock_; }
   Thread::BasicLockable& accessLogLock() { return access_log_lock_; }
@@ -130,6 +132,12 @@ public:
   void terminateParent() override;
   void shutdown() override;
   std::string version() override;
+
+  /**
+   * envoy --hot_restart_version doesn't initialize Envoy, but computes the version string
+   * based on the configured options.
+   */
+  static std::string hotRestartVersion(uint64_t max_num_stats, uint64_t max_stat_name_len);
 
   // RawStatDataAllocator
   Stats::RawStatData* alloc(const std::string& name) override;
@@ -189,16 +197,20 @@ private:
     return reinterpret_cast<rpc_class*>(base_message);
   }
 
-  int bindDomainSocket(uint64_t id, Api::OsSysCalls& os_sys_calls);
+  int bindDomainSocket(uint64_t id);
   void initDomainSocketAddress(sockaddr_un* address);
   sockaddr_un createDomainSocketAddress(uint64_t id);
   void onGetListenSocket(RpcGetListenSocketRequest& rpc);
   void onSocketEvent();
   RpcBase* receiveRpc(bool block);
   void sendMessage(sockaddr_un& address, RpcBase& rpc);
+  static std::string versionHelper(uint64_t max_num_stats, uint64_t max_stat_name_len,
+                                   RawStatDataSet& stats_set);
 
   Options& options_;
+  SharedMemoryHashSetOptions stats_set_options_;
   SharedMemory& shmem_;
+  std::unique_ptr<RawStatDataSet> stats_set_;
   ProcessSharedMutex log_lock_;
   ProcessSharedMutex access_log_lock_;
   ProcessSharedMutex stat_lock_;

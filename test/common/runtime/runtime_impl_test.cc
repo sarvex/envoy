@@ -110,6 +110,11 @@ TEST_F(RuntimeImplTest, All) {
   EXPECT_EQ(2UL, loader->snapshot().getInteger("file3", 1));
   EXPECT_EQ(123UL, loader->snapshot().getInteger("file4", 1));
 
+  // Files with comments.
+  EXPECT_EQ(123UL, loader->snapshot().getInteger("file5", 1));
+  EXPECT_EQ("/home#about-us", loader->snapshot().get("file6"));
+  EXPECT_EQ("", loader->snapshot().get("file7"));
+
   // Feature enablement.
   EXPECT_CALL(generator, random()).WillOnce(Return(1));
   EXPECT_TRUE(loader->snapshot().featureEnabled("file3", 1));
@@ -127,6 +132,32 @@ TEST_F(RuntimeImplTest, All) {
 
   // Overrides from override dir
   EXPECT_EQ("hello override", loader->snapshot().get("file1"));
+}
+
+TEST_F(RuntimeImplTest, GetAll) {
+  setup();
+  run("test/common/runtime/test_data/current", "envoy_override");
+
+  auto values = loader->snapshot().getAll();
+
+  auto entry = values.find("file1");
+  EXPECT_FALSE(entry == values.end());
+  EXPECT_EQ("hello override", entry->second.string_value_);
+  EXPECT_FALSE(entry->second.uint_value_.valid());
+
+  entry = values.find("file2");
+  EXPECT_FALSE(entry == values.end());
+  EXPECT_EQ("world", entry->second.string_value_);
+  EXPECT_FALSE(entry->second.uint_value_.valid());
+
+  entry = values.find("file3");
+  EXPECT_FALSE(entry == values.end());
+  EXPECT_EQ("2", entry->second.string_value_);
+  EXPECT_TRUE(entry->second.uint_value_.valid());
+  EXPECT_EQ(2UL, entry->second.uint_value_.value());
+
+  entry = values.find("invalid");
+  EXPECT_TRUE(entry == values.end());
 }
 
 TEST_F(RuntimeImplTest, BadDirectory) {
@@ -155,6 +186,7 @@ TEST(NullRuntimeImplTest, All) {
   EXPECT_EQ(1UL, loader.snapshot().getInteger("foo", 1));
   EXPECT_CALL(generator, random()).WillOnce(Return(49));
   EXPECT_TRUE(loader.snapshot().featureEnabled("foo", 50));
+  EXPECT_TRUE(loader.snapshot().getAll().empty());
 }
 
 } // namespace Runtime

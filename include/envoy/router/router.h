@@ -8,9 +8,10 @@
 #include <memory>
 #include <string>
 
+#include "envoy/access_log/access_log.h"
 #include "envoy/common/optional.h"
-#include "envoy/http/access_log.h"
 #include "envoy/http/codec.h"
+#include "envoy/http/codes.h"
 #include "envoy/http/header_map.h"
 #include "envoy/tracing/http_tracer.h"
 #include "envoy/upstream/resource_manager.h"
@@ -18,20 +19,29 @@
 #include "common/protobuf/protobuf.h"
 #include "common/protobuf/utility.h"
 
+#include "api/base.pb.h"
+
 namespace Envoy {
 namespace Router {
 
 /**
- * A routing primitive that creates a redirect path.
+ * A routing primitive that specifies a direct (non-proxied) HTTP response.
  */
-class RedirectEntry {
+class DirectResponseEntry {
 public:
-  virtual ~RedirectEntry() {}
+  virtual ~DirectResponseEntry() {}
+
+  /**
+   * Returns the HTTP status code to return.
+   * @return Http::Code the response Code.
+   */
+  virtual Http::Code responseCode() const PURE;
 
   /**
    * Returns the redirect path based on the request headers.
    * @param headers supplies the request headers.
-   * @return std::string the redirect URL.
+   * @return std::string the redirect URL if this DirectResponseEntry is a redirect,
+   *         or an empty string otherwise.
    */
   virtual std::string newPath(const Http::HeaderMap& headers) const PURE;
 };
@@ -86,12 +96,13 @@ class RetryPolicy {
 public:
   // clang-format off
   static const uint32_t RETRY_ON_5XX                     = 0x1;
-  static const uint32_t RETRY_ON_CONNECT_FAILURE         = 0x2;
-  static const uint32_t RETRY_ON_RETRIABLE_4XX           = 0x4;
-  static const uint32_t RETRY_ON_REFUSED_STREAM          = 0x8;
-  static const uint32_t RETRY_ON_GRPC_CANCELLED          = 0x10;
-  static const uint32_t RETRY_ON_GRPC_DEADLINE_EXCEEDED  = 0x20;
-  static const uint32_t RETRY_ON_GRPC_RESOURCE_EXHAUSTED = 0x40;
+  static const uint32_t RETRY_ON_GATEWAY_ERROR           = 0x2;
+  static const uint32_t RETRY_ON_CONNECT_FAILURE         = 0x4;
+  static const uint32_t RETRY_ON_RETRIABLE_4XX           = 0x8;
+  static const uint32_t RETRY_ON_REFUSED_STREAM          = 0x10;
+  static const uint32_t RETRY_ON_GRPC_CANCELLED          = 0x20;
+  static const uint32_t RETRY_ON_GRPC_DEADLINE_EXCEEDED  = 0x40;
+  static const uint32_t RETRY_ON_GRPC_RESOURCE_EXHAUSTED = 0x80;
   // clang-format on
 
   virtual ~RetryPolicy() {}
@@ -284,6 +295,12 @@ public:
   virtual const std::string& clusterName() const PURE;
 
   /**
+   * Returns the HTTP status code to use when configured cluster is not found.
+   * @return Http::Code to use when configured cluster is not found.
+   */
+  virtual Http::Code clusterNotFoundResponseCode() const PURE;
+
+  /**
    * @return const CorsPolicy* the CORS policy for this virtual host.
    */
   virtual const CorsPolicy* corsPolicy() const PURE;
@@ -296,7 +313,17 @@ public:
    * @param request_info holds additional information about the request.
    */
   virtual void finalizeRequestHeaders(Http::HeaderMap& headers,
-                                      const Http::AccessLog::RequestInfo& request_info) const PURE;
+                                      const RequestInfo::RequestInfo& request_info) const PURE;
+
+  /**
+   * Do potentially destructive header transforms on response headers prior to forwarding. For
+   * adding or removing headers. This should only be called ONCE immediately after receiving an
+   * upstream's headers.
+   * @param headers supplies the response headers, which may be modified during this call.
+   * @param request_info holds additional information about the request.
+   */
+  virtual void finalizeResponseHeaders(Http::HeaderMap& headers,
+                                       const RequestInfo::RequestInfo& request_info) const PURE;
 
   /**
    * @return const HashPolicy* the optional hash policy for the route.
@@ -368,6 +395,12 @@ public:
    * @return bool true if the virtual host rate limits should be included.
    */
   virtual bool includeVirtualHostRateLimits() const PURE;
+
+  /**
+   * @return const envoy::api::v2::Metadata& return the metadata provided in the config for this
+   * route.
+   */
+  virtual const envoy::api::v2::Metadata& metadata() const PURE;
 };
 
 /**
@@ -393,16 +426,16 @@ public:
 typedef std::unique_ptr<const Decorator> DecoratorConstPtr;
 
 /**
- * An interface that holds a RedirectEntry or a RouteEntry for a request.
+ * An interface that holds a DirectResponseEntry or RouteEntry for a request.
  */
 class Route {
 public:
   virtual ~Route() {}
 
   /**
-   * @return the redirect entry or nullptr if there is no redirect needed for the request.
+   * @return the direct response entry or nullptr if there is no direct response for the request.
    */
-  virtual const RedirectEntry* redirectEntry() const PURE;
+  virtual const DirectResponseEntry* directResponseEntry() const PURE;
 
   /**
    * @return the route entry or nullptr if there is no matching route for the request.
@@ -426,7 +459,7 @@ public:
 
   /**
    * Based on the incoming HTTP request headers, determine the target route (containing either a
-   * route entry or a redirect entry) for the request.
+   * route entry or a direct response entry) for the request.
    * @param headers supplies the request headers.
    * @param random_value supplies the random seed to use if a runtime choice is required. This
    *        allows stable choices between calls if desired.
@@ -440,19 +473,6 @@ public:
    * (RFC1918) source.
    */
   virtual const std::list<Http::LowerCaseString>& internalOnlyHeaders() const PURE;
-
-  /**
-   * Return a list of header key/value pairs that will be added to every response that transits the
-   * router.
-   */
-  virtual const std::list<std::pair<Http::LowerCaseString, std::string>>&
-  responseHeadersToAdd() const PURE;
-
-  /**
-   * Return a list of upstream headers that will be stripped from every response that transits the
-   * router.
-   */
-  virtual const std::list<Http::LowerCaseString>& responseHeadersToRemove() const PURE;
 };
 
 typedef std::shared_ptr<const Config> ConfigConstSharedPtr;

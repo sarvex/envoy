@@ -25,16 +25,16 @@
   * `typedef std::shared_ptr<Bar> BarSharedPtr;`
   * `typedef std::shared_ptr<const Blah> BlahConstSharedPtr;`
   * Regular pointers (e.g. `int* foo`) should not be type aliased.
-* If move semantics are intended, prefer specifying function arguments with `&&`. 
+* If move semantics are intended, prefer specifying function arguments with `&&`.
   E.g., `void onHeaders(Http::HeaderMapPtr&& headers, ...)`. The rationale for this is that it
   forces the caller to specify `std::move(...)` or pass a temporary and makes the intention at
   the callsite clear. Otherwise, it's difficult to tell if a const reference is actually being
   passed to the called function. This is true even for `std::unique_ptr`.
 * Prefer `unique_ptr` over `shared_ptr` wherever possible. `unique_ptr` makes ownership in
-  production code easier to reason about. Note that this creates some test oddities where 
+  production code easier to reason about. Note that this creates some test oddities where
   production code requires a `unique_ptr` but the test must still have access to the memory
   the production code is using (mock or otherwise). In these cases it is acceptable to allocate
-  raw memory in a test and return it to the production code with the expectation that the 
+  raw memory in a test and return it to the production code with the expectation that the
   production code will hold it in a `unique_ptr` and free it. Envoy uses the factory pattern
   quite a bit for these cases. (Search the code for "factory").
 * The Google C++ style guide points out that [non-PoD static and global variables are forbidden](https://google.github.io/styleguide/cppguide.html#Static_and_Global_Variables).
@@ -42,6 +42,10 @@
   advice in the [C++ FAQ on the static initialization
   fiasco](https://isocpp.org/wiki/faq/ctors#static-init-order-on-first-use) for
   how to best handle this.
+* The Google C++ style guide points out that [constant vars should be named `kConstantVar`](https://google.github.io/styleguide/cppguide.html#Constant_Names).
+  In the Envoy codebase we use `ConstantVar` or `CONSTANT_VAR`. If you pick `CONSTANT_VAR`,
+  please be certain the name is globally significant to avoid potential conflicts with #defines,
+  which are not namespace-scoped, and may appear in externally controlled header files.
 * API-level comments should follow normal Doxygen conventions. Use `@param` to describe
   parameters and `@return <return-type>` for return values. Internal comments for
   methods and member variables may be regular C++ `//` comments or Doxygen at
@@ -55,7 +59,7 @@
 * If a method that must be defined outside the `test` directory is intended to be called only
   from test code then it should have a name that ends in `ForTest()` such as `aMethodForTest()`.
   In most cases tests can and should be structured so this is not necessary.
-* Tests default to StrictMock so will fail if hitting unexpected warnings.  Feel free to use
+* Tests default to StrictMock so will fail if hitting unexpected warnings. Feel free to use
   NiceMock for mocks whose behavior is not the focus of a test.
 * There are probably a few other things missing from this list. We will add them as they
   are brought to our attention.

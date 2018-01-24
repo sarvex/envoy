@@ -36,6 +36,7 @@
 #include "server/test_hooks.h"
 
 #include "api/bootstrap.pb.h"
+#include "api/bootstrap.pb.validate.h"
 
 namespace Envoy {
 namespace Server {
@@ -58,8 +59,8 @@ InstanceImpl::InstanceImpl(Options& options, Network::Address::InstanceConstShar
       try {
         Logger::Registry::getSink()->logToFile(options.logPath(), access_log_manager_);
       } catch (const EnvoyException& e) {
-        throw EnvoyException(fmt::format("Failed to open log-file '{}'.  e.what(): {}",
-                                         options.logPath(), e.what()));
+        throw EnvoyException(
+            fmt::format("Failed to open log-file '{}'. e.what(): {}", options.logPath(), e.what()));
       }
     }
 
@@ -69,9 +70,15 @@ InstanceImpl::InstanceImpl(Options& options, Network::Address::InstanceConstShar
   } catch (const EnvoyException& e) {
     ENVOY_LOG(critical, "error initializing configuration '{}': {}", options.configPath(),
               e.what());
+
+    // Invoke shutdown methods called in run().
     thread_local_.shutdownGlobalThreading();
+    stats_store_.shutdownThreading();
     thread_local_.shutdownThread();
-    exit(1);
+
+    // Invoke the shutdown method called in the destructor.
+    restarter_.shutdown();
+    throw;
   }
 }
 
@@ -88,7 +95,7 @@ Upstream::ClusterManager& InstanceImpl::clusterManager() { return config_->clust
 Tracing::HttpTracer& InstanceImpl::httpTracer() { return config_->httpTracer(); }
 
 void InstanceImpl::drainListeners() {
-  ENVOY_LOG(warn, "closing and draining listeners");
+  ENVOY_LOG(info, "closing and draining listeners");
   listener_manager_->stopListeners();
   drain_manager_->startDrainSequence(nullptr);
 }
@@ -150,29 +157,40 @@ void InstanceImpl::getParentStats(HotRestart::GetParentStatsInfo& info) {
 
 bool InstanceImpl::healthCheckFailed() { return server_stats_->live_.value() == 0; }
 
+void InstanceUtil::loadBootstrapConfig(envoy::api::v2::Bootstrap& bootstrap,
+                                       const std::string& config_path, bool v2_only) {
+  bool v2_config_loaded = false;
+  try {
+    MessageUtil::loadFromFileAndValidate(config_path, bootstrap);
+    v2_config_loaded = true;
+  } catch (const EnvoyException& e) {
+    if (v2_only) {
+      throw;
+    } else {
+      // TODO(htuch): When v1 is deprecated, make this a warning encouraging config upgrade.
+      ENVOY_LOG(debug, "Unable to initialize config as v2, will retry as v1: {}", e.what());
+    }
+  }
+  if (!v2_config_loaded) {
+    Json::ObjectSharedPtr config_json = Json::Factory::loadFromFile(config_path);
+    Config::BootstrapJson::translateBootstrap(*config_json, bootstrap);
+    MessageUtil::validate(bootstrap);
+  }
+}
+
 void InstanceImpl::initialize(Options& options,
                               Network::Address::InstanceConstSharedPtr local_address,
                               ComponentFactory& component_factory) {
-  ENVOY_LOG(warn, "initializing epoch {} (hot restart version={})", options.restartEpoch(),
+  ENVOY_LOG(info, "initializing epoch {} (hot restart version={})", options.restartEpoch(),
             restarter_.version());
 
   // Handle configuration that needs to take place prior to the main configuration load.
   envoy::api::v2::Bootstrap bootstrap;
-  try {
-    MessageUtil::loadFromFile(options.configPath(), bootstrap);
-  } catch (const EnvoyException& e) {
-    // TODO(htuch): When v1 is deprecated, make this a warning encouraging config upgrade.
-    ENVOY_LOG(debug, "Unable to initialize config as v2, will retry as v1: {}", e.what());
-  }
-  if (!bootstrap.has_admin()) {
-    Json::ObjectSharedPtr config_json = Json::Factory::loadFromFile(options.configPath());
-    Config::BootstrapJson::translateBootstrap(*config_json, bootstrap);
-  }
+  InstanceUtil::loadBootstrapConfig(bootstrap, options.configPath(), options.v2ConfigOnly());
 
   // Needs to happen as early as possible in the instantiation to preempt the objects that require
   // stats.
-  tag_extractors_ = Config::Utility::createTagExtractors(bootstrap);
-  stats_store_.setTagExtractors(tag_extractors_);
+  stats_store_.setTagProducer(Config::Utility::createTagProducer(bootstrap));
 
   server_stats_.reset(
       new ServerStats{ALL_SERVER_STATS(POOL_GAUGE_PREFIX(stats_store_, "server."))});
@@ -192,7 +210,7 @@ void InstanceImpl::initialize(Options& options,
                                    options.serviceClusterName(), options.serviceNodeName()));
 
   Configuration::InitialImpl initial_config(bootstrap);
-  ENVOY_LOG(info, "admin address: {}", initial_config.admin().address()->asString());
+  ENVOY_LOG(debug, "admin address: {}", initial_config.admin().address()->asString());
 
   HotRestart::ShutdownParentAdminInfo info;
   info.original_start_time_ = original_start_time_;
@@ -200,11 +218,9 @@ void InstanceImpl::initialize(Options& options,
   original_start_time_ = info.original_start_time_;
   admin_.reset(new AdminImpl(initial_config.admin().accessLogPath(),
                              initial_config.admin().profilePath(), options.adminAddressPath(),
-                             initial_config.admin().address(), *this));
-
-  admin_scope_ = stats_store_.createScope("listener.admin.");
-  handler_->addListener(*admin_, admin_->mutable_socket(), *admin_scope_, 0,
-                        Network::ListenerOptions::listenerOptionsWithBindToPort());
+                             initial_config.admin().address(), *this,
+                             stats_store_.createScope("listener.admin.")));
+  handler_->addListener(admin_->listener());
 
   loadServerFlags(initial_config.flagsPath());
 
@@ -287,7 +303,7 @@ void InstanceImpl::loadServerFlags(const Optional<std::string>& flags_path) {
 
   ENVOY_LOG(info, "server flags path: {}", flags_path.value());
   if (api_->fileExists(flags_path.value() + "/drain")) {
-    ENVOY_LOG(warn, "starting server in drain mode");
+    ENVOY_LOG(info, "starting server in drain mode");
     failHealthcheck(true);
   }
 }
@@ -325,7 +341,7 @@ RunHelper::RunHelper(Event::Dispatcher& dispatcher, Upstream::ClusterManager& cm
       return;
     }
 
-    ENVOY_LOG(warn, "all clusters initialized. initializing init manager");
+    ENVOY_LOG(info, "all clusters initialized. initializing init manager");
     init_manager.initialize([this, workers_start_cb]() {
       if (shutdown_) {
         return;
@@ -341,11 +357,11 @@ void InstanceImpl::run() {
                    [this]() -> void { startWorkers(); });
 
   // Run the main dispatch loop waiting to exit.
-  ENVOY_LOG(warn, "starting main dispatch loop");
+  ENVOY_LOG(info, "starting main dispatch loop");
   auto watchdog = guard_dog_->createWatchDog(Thread::Thread::currentThreadId());
   watchdog->startWatchdog(*dispatcher_);
   dispatcher_->run(Event::Dispatcher::RunType::Block);
-  ENVOY_LOG(warn, "main dispatch loop exited");
+  ENVOY_LOG(info, "main dispatch loop exited");
   guard_dog_->stopWatching(watchdog);
   watchdog.reset();
 
@@ -366,14 +382,14 @@ void InstanceImpl::run() {
   config_->clusterManager().shutdown();
   handler_.reset();
   thread_local_.shutdownThread();
-  ENVOY_LOG(warn, "exiting");
+  ENVOY_LOG(info, "exiting");
   ENVOY_FLUSH_LOG();
 }
 
 Runtime::Loader& InstanceImpl::runtime() { return *runtime_loader_; }
 
 void InstanceImpl::shutdown() {
-  ENVOY_LOG(warn, "shutdown invoked. sending SIGTERM to self");
+  ENVOY_LOG(info, "shutdown invoked. sending SIGTERM to self");
   kill(getpid(), SIGTERM);
 }
 
