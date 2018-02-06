@@ -1,0 +1,1 @@
+add_library(network_client_ssl_auth_lib client_ssl_auth.cc config.cc)

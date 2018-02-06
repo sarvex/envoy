@@ -6,6 +6,10 @@
 
 #include "common/protobuf/protobuf.h"
 
+#if defined(_WIN32)
+#undef DELETE
+#endif
+
 namespace Envoy {
 namespace Config {
 

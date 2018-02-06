@@ -247,7 +247,76 @@ private:
   const TcpHealthCheckMatcher::MatchSegments receive_bytes_;
 };
 
+#if !defined(_WIN32)
 /**
+<<<<<<< HEAD
+=======
+ * Redis health checker implementation. Sends PING and expects PONG.
+ */
+class RedisHealthCheckerImpl : public HealthCheckerImplBase {
+public:
+  RedisHealthCheckerImpl(const Cluster& cluster, const envoy::api::v2::HealthCheck& config,
+                         Event::Dispatcher& dispatcher, Runtime::Loader& runtime,
+                         Runtime::RandomGenerator& random,
+                         Redis::ConnPool::ClientFactory& client_factory);
+
+  static const Redis::RespValue& healthCheckRequest() {
+    static HealthCheckRequest* request = new HealthCheckRequest();
+    return request->request_;
+  }
+
+private:
+  struct RedisActiveHealthCheckSession : public ActiveHealthCheckSession,
+                                         public Redis::ConnPool::Config,
+                                         public Redis::ConnPool::PoolCallbacks,
+                                         public Network::ConnectionCallbacks {
+    RedisActiveHealthCheckSession(RedisHealthCheckerImpl& parent, const HostSharedPtr& host);
+    ~RedisActiveHealthCheckSession();
+
+    // ActiveHealthCheckSession
+    void onInterval() override;
+    void onTimeout() override;
+
+    // Redis::ConnPool::Config
+    bool disableOutlierEvents() const override { return true; }
+    std::chrono::milliseconds opTimeout() const override {
+      // Allow the main HC infra to control timeout.
+      return parent_.timeout_ * 2;
+    }
+
+    // Redis::ConnPool::PoolCallbacks
+    void onResponse(Redis::RespValuePtr&& value) override;
+    void onFailure() override;
+
+    // Network::ConnectionCallbacks
+    void onEvent(Network::ConnectionEvent event) override;
+    void onAboveWriteBufferHighWatermark() override {}
+    void onBelowWriteBufferLowWatermark() override {}
+
+    RedisHealthCheckerImpl& parent_;
+    Redis::ConnPool::ClientPtr client_;
+    Redis::ConnPool::PoolRequest* current_request_{};
+  };
+
+  struct HealthCheckRequest {
+    HealthCheckRequest();
+
+    Redis::RespValue request_;
+  };
+
+  typedef std::unique_ptr<RedisActiveHealthCheckSession> RedisActiveHealthCheckSessionPtr;
+
+  // HealthCheckerImplBase
+  ActiveHealthCheckSessionPtr makeSession(HostSharedPtr host) override {
+    return std::make_unique<RedisActiveHealthCheckSession>(*this, host);
+  }
+
+  Redis::ConnPool::ClientFactory& client_factory_;
+};
+#endif
+
+/**
+>>>>>>> 2b7a44d70... Source changes and CMake files to build for Win32
  * gRPC health checker implementation.
  */
 class GrpcHealthCheckerImpl : public HealthCheckerImplBase {

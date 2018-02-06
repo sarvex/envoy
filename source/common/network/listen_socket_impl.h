@@ -1,6 +1,14 @@
 #pragma once
 
+#if !defined(_WIN32)
 #include <unistd.h>
+#else
+#include <winsock2.h>
+#undef X509_NAME
+#undef DELETE
+#undef ERROR
+#undef TRUE
+#endif
 
 #include <memory>
 #include <string>
@@ -20,13 +28,23 @@ public:
 
   // Network::Socket
   const Address::InstanceConstSharedPtr& localAddress() const override { return local_address_; }
-  int fd() const override { return fd_; }
+  SOCKET_FD_TYPE fd() const override { return fd_; }
+
+#if !defined(_WIN32)
   void close() override {
     if (fd_ != -1) {
       ::close(fd_);
       fd_ = -1;
     }
   }
+#else
+  void close() override {
+    if (fd_ != -1) {
+      ::closesocket(fd_);
+      fd_ = -1;
+    }
+  }
+#endif
   void ensureOptions() {
     if (!options_) {
       options_ = std::make_shared<std::vector<OptionConstSharedPtr>>();
@@ -43,17 +61,17 @@ public:
   const OptionsSharedPtr& options() const override { return options_; }
 
 protected:
-  SocketImpl(int fd, const Address::InstanceConstSharedPtr& local_address)
+  SocketImpl(SOCKET_FD_TYPE fd, const Address::InstanceConstSharedPtr& local_address)
       : fd_(fd), local_address_(local_address) {}
 
-  int fd_;
+  SOCKET_FD_TYPE fd_;
   Address::InstanceConstSharedPtr local_address_;
   OptionsSharedPtr options_;
 };
 
 class ListenSocketImpl : public SocketImpl {
 protected:
-  ListenSocketImpl(int fd, const Address::InstanceConstSharedPtr& local_address)
+  ListenSocketImpl(SOCKET_FD_TYPE fd, const Address::InstanceConstSharedPtr& local_address)
       : SocketImpl(fd, local_address) {}
 
   void doBind();
@@ -67,21 +85,23 @@ class TcpListenSocket : public ListenSocketImpl {
 public:
   TcpListenSocket(const Address::InstanceConstSharedPtr& address,
                   const Network::Socket::OptionsSharedPtr& options, bool bind_to_port);
-  TcpListenSocket(int fd, const Address::InstanceConstSharedPtr& address,
+  TcpListenSocket(SOCKET_FD_TYPE fd, const Address::InstanceConstSharedPtr& address,
                   const Network::Socket::OptionsSharedPtr& options);
 };
 
 typedef std::unique_ptr<TcpListenSocket> TcpListenSocketPtr;
 
+#if !defined(_WIN32)
 class UdsListenSocket : public ListenSocketImpl {
 public:
   UdsListenSocket(const Address::InstanceConstSharedPtr& address);
-  UdsListenSocket(int fd, const Address::InstanceConstSharedPtr& address);
+  UdsListenSocket(SOCKET_FD_TYPE fd, const Address::InstanceConstSharedPtr& address);
 };
+#endif
 
 class ConnectionSocketImpl : public SocketImpl, public ConnectionSocket {
 public:
-  ConnectionSocketImpl(int fd, const Address::InstanceConstSharedPtr& local_address,
+  ConnectionSocketImpl(SOCKET_FD_TYPE fd, const Address::InstanceConstSharedPtr& local_address,
                        const Address::InstanceConstSharedPtr& remote_address)
       : SocketImpl(fd, local_address), remote_address_(remote_address) {}
 
@@ -128,7 +148,7 @@ protected:
 // ConnectionSocket used with server connections.
 class AcceptedSocketImpl : public ConnectionSocketImpl {
 public:
-  AcceptedSocketImpl(int fd, const Address::InstanceConstSharedPtr& local_address,
+  AcceptedSocketImpl(SOCKET_FD_TYPE fd, const Address::InstanceConstSharedPtr& local_address,
                      const Address::InstanceConstSharedPtr& remote_address)
       : ConnectionSocketImpl(fd, local_address, remote_address) {}
 };

@@ -1,6 +1,6 @@
 #pragma once
 
-#include <sys/socket.h>
+#include "envoy/common/socket_fd.h"
 #include <sys/types.h>
 
 #include <array>
@@ -62,8 +62,8 @@ public:
   virtual bool isAnyAddress() const PURE;
 
   /**
-   * @return whether this address is a valid unicast address, i.e., not an wild card, broadcast, or
-   * multicast address.
+   * @return whether this address is a valid unicast address, i.e., not an wild card, broadcast,
+   * or multicast address.
    */
   virtual bool isUnicastAddress() const PURE;
 
@@ -131,7 +131,7 @@ public:
    * @return 0 for success and -1 for failure. The error code associated with a failure will
    * be accessible in a plaform dependent fashion (e.g. errno for Unix platforms).
    */
-  virtual int bind(int fd) const PURE;
+  virtual int bind(SOCKET_FD_TYPE fd) const PURE;
 
   /**
    * Connect a socket to this address. The socket should have been created with a call to socket()
@@ -140,7 +140,7 @@ public:
    * @return 0 for success and -1 for failure. The error code associated with a failure will
    * be accessible in a plaform dependent fashion (e.g. errno for Unix platforms).
    */
-  virtual int connect(int fd) const PURE;
+  virtual int connect(SOCKET_FD_TYPE fd) const PURE;
 
   /**
    * @return the IP address information IFF type() == Type::Ip, otherwise nullptr.
@@ -154,7 +154,7 @@ public:
    * code associated with a failure will be accessible in a plaform dependent fashion (e.g.
    * errno for Unix platforms).
    */
-  virtual int socket(SocketType type) const PURE;
+  virtual SOCKET_FD_TYPE socket(SocketType type) const PURE;
 
   /**
    * @return the type of address.

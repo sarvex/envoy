@@ -3,8 +3,9 @@
 #include <chrono>
 #include <cstdint>
 #include <string>
-
+#if !defined(DISABLE_PROTO_VALIDATE)
 #include "envoy/config/filter/http/buffer/v2/buffer.pb.validate.h"
+#endif
 #include "envoy/registry/registry.h"
 
 #include "common/config/filter_json.h"

@@ -1,6 +1,8 @@
 #pragma once
 
+#if !defined(WIN32)
 #include <strings.h>
+#endif
 
 #include <chrono>
 #include <cstdint>
@@ -185,7 +187,11 @@ public:
    * @return < 0, 0, > 0 depending on the comparison result.
    */
   static int caseInsensitiveCompare(const char* lhs, const char* rhs) {
+#if !defined(WIN32)
     return strcasecmp(lhs, rhs);
+#else
+    return _stricmp(lhs, rhs);
+#endif
   }
 
   /**

@@ -6,6 +6,8 @@
 #include <cstdint>
 #include <iterator>
 #include <string>
+#include <vector>
+#include <cctype>
 
 #include "envoy/common/exception.h"
 
@@ -82,7 +84,7 @@ std::string DateFormatter::fromTime(const SystemTime& time) const {
 
     // Build a new formatted format string at current time.
     CachedTime::Formatted formatted;
-    const std::string seconds_str = fmt::FormatInt(epoch_time_seconds.count()).str();
+    const std::string seconds_str = fmt::to_string(epoch_time_seconds.count());
     formatted.str =
         fromTimeAndPrepareSpecifierOffsets(current_time, formatted.specifier_offsets, seconds_str);
     cached_time.seconds_length = seconds_str.size();
@@ -98,7 +100,7 @@ std::string DateFormatter::fromTime(const SystemTime& time) const {
   // Copy the current cached formatted format string, then replace its subseconds part (when it has
   // non-zero width) by correcting its position using prepared subseconds offsets.
   std::string formatted_str = formatted.str;
-  const std::string nanoseconds = fmt::FormatInt(epoch_time_ns.count()).str();
+  const std::string nanoseconds = fmt::to_string(epoch_time_ns.count());
   for (size_t i = 0; i < specifiers_.size(); ++i) {
     const auto& specifier = specifiers_.at(i);
 
@@ -158,7 +160,11 @@ std::string DateFormatter::parse(const std::string& format_string) {
 
 std::string DateFormatter::fromTime(time_t time) const {
   tm current_tm;
+#if !defined(_WIN32)
   gmtime_r(&time, &current_tm);
+#else
+  gmtime_s(&current_tm, &time);
+#endif
 
   std::array<char, 1024> buf;
   strftime(&buf[0], buf.size(), format_string_.c_str(), &current_tm);
@@ -169,7 +175,11 @@ std::string
 DateFormatter::fromTimeAndPrepareSpecifierOffsets(time_t time, SpecifierOffsets& specifier_offsets,
                                                   const std::string& seconds_str) const {
   tm current_tm;
+#if !defined(_WIN32)
   gmtime_r(&time, &current_tm);
+#else
+  gmtime_s(&current_tm, &time);
+#endif
 
   std::array<char, 1024> buf;
   std::string formatted;
@@ -368,7 +378,7 @@ uint32_t StringUtil::itoa(char* out, size_t buffer_size, uint64_t i) {
   }
 
   *current = 0;
-  return current - out;
+  return static_cast<uint32_t>(current - out);
 }
 
 size_t StringUtil::strlcpy(char* dst, const char* src, size_t size) {
@@ -438,7 +448,11 @@ std::string AccessLogDateTimeFormatter::fromTime(const SystemTime& time) {
       cached_time.epoch_time_seconds != epoch_time_seconds) {
     time_t time = static_cast<time_t>(epoch_time_seconds.count());
     tm date_time;
+#if !defined(_WIN32)
     gmtime_r(&time, &date_time);
+#else
+    gmtime_s(&date_time, &time);
+#endif
     cached_time.formatted_time_length =
         strftime(cached_time.formatted_time, sizeof(cached_time.formatted_time), DefaultDateFormat,
                  &date_time);
@@ -474,7 +488,11 @@ bool StringUtil::startsWith(const char* source, const std::string& start, bool c
   if (case_sensitive) {
     return strncmp(source, start.c_str(), start.size()) == 0;
   } else {
+#if !defined(_WIN32)
     return strncasecmp(source, start.c_str(), start.size()) == 0;
+#else
+    return _strnicmp(source, start.c_str(), start.size()) == 0;
+#endif
   }
 }
 

@@ -48,7 +48,7 @@ public:
   /**
    * @return int the file descriptor associated with the connection.
    */
-  virtual int fd() const PURE;
+  virtual SOCKET_FD_TYPE fd() const PURE;
 
   /**
    * @return Network::Connection& the connection interface.

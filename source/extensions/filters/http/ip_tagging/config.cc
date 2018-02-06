@@ -1,6 +1,9 @@
 #include "extensions/filters/http/ip_tagging/config.h"
 
+#if !defined(DISABLE_PROTO_VALIDATE)
 #include "envoy/config/filter/http/ip_tagging/v2/ip_tagging.pb.validate.h"
+#endif
+
 #include "envoy/registry/registry.h"
 
 #include "common/protobuf/utility.h"

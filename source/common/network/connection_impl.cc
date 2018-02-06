@@ -1,9 +1,12 @@
 #include "common/network/connection_impl.h"
+#include "common/network/errormap.h"
 
+#if !defined(_WIN32)
 #include <netinet/tcp.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
+#endif
 
 #include <atomic>
 #include <cstdint>
@@ -170,12 +173,22 @@ void ConnectionImpl::noDelay(bool enable) {
 
   // Set NODELAY
   int new_value = enable;
-  rc = setsockopt(fd(), IPPROTO_TCP, TCP_NODELAY, &new_value, sizeof(new_value));
+  rc = setsockopt(fd(), IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&new_value), sizeof(new_value));
 #ifdef __APPLE__
   if (-1 == rc && errno == EINVAL) {
     // Sometimes occurs when the connection is not yet fully formed. Empirically, TCP_NODELAY is
     // enabled despite this result.
     return;
+  }
+#endif
+#if defined(_WIN32)
+  if (-1 == rc) {
+    auto errorno = get_socket_error();
+    if (errorno == EAGAIN || errorno == EINVAL) {
+      // Sometimes occurs when the connection is not yet fully formed. Empirically, TCP_NODELAY is
+      // enabled despite this result.
+      return;
+    }
   }
 #endif
 
@@ -459,7 +472,7 @@ void ConnectionImpl::onWriteReady() {
   if (connecting_) {
     int error;
     socklen_t error_size = sizeof(error);
-    int rc = getsockopt(fd(), SOL_SOCKET, SO_ERROR, &error, &error_size);
+    int rc = getsockopt(fd(), SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&error), &error_size);
     ASSERT(0 == rc);
 
     if (error == 0) {
@@ -553,8 +566,9 @@ ClientConnectionImpl::ClientConnectionImpl(
   if (source_address != nullptr) {
     const int rc = source_address->bind(fd());
     if (rc < 0) {
+      int errorno = get_socket_error();
       ENVOY_LOG_MISC(debug, "Bind failure. Failed to bind to {}: {}", source_address->asString(),
-                     strerror(errno));
+                     strerror(errorno));
       bind_error_ = true;
       // Set a special error state to ensure asynchronous close to give the owner of the
       // ConnectionImpl a chance to add callbacks and detect the "disconnect".
@@ -574,12 +588,14 @@ void ClientConnectionImpl::connect() {
     ASSERT(connecting_);
   } else {
     ASSERT(rc == -1);
-    if (errno == EINPROGRESS) {
+    int errorno = get_socket_error();
+    if (errorno == EINPROGRESS || errorno == EAGAIN) {
       ASSERT(connecting_);
       ENVOY_CONN_LOG(debug, "connection in progress", *this);
     } else {
       immediate_error_event_ = ConnectionEvent::RemoteClose;
       connecting_ = false;
+
       ENVOY_CONN_LOG(debug, "immediate connection error: {}", *this, errno);
 
       // Trigger a write event. This is needed on OSX and seems harmless on Linux.

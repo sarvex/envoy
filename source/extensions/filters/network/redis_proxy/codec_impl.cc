@@ -115,9 +115,15 @@ void RespValue::type(RespType type) {
 
 void DecoderImpl::decode(Buffer::Instance& data) {
   uint64_t num_slices = data.getRawSlices(nullptr, 0);
+#if !defined(_WIN32)
   Buffer::RawSlice slices[num_slices];
+#else
+  Buffer::RawSlice* slices =
+  reinterpret_cast<Buffer::RawSlice*>(_alloca(sizeof(Buffer::RawSlice) * num_slices));
+#endif
   data.getRawSlices(slices, num_slices);
-  for (const Buffer::RawSlice& slice : slices) {
+  for (int i = 0; i < num_slices; i++) {
+    const Buffer::RawSlice& slice = slices[i];
     parseSlice(slice);
   }
 

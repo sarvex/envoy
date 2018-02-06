@@ -7,7 +7,9 @@
 #include <map>
 #include <string>
 
+#if !defined(DISABLE_PROTO_VALIDATE)
 #include "envoy/config/filter/network/http_connection_manager/v2/http_connection_manager.pb.validate.h"
+#endif
 #include "envoy/http/filter.h"
 #include "envoy/router/route_config_provider_manager.h"
 

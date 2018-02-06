@@ -1,6 +1,8 @@
 #pragma once
 
+#if !defined(_WIN32)
 #include <dirent.h>
+#endif
 
 #include <cstdint>
 #include <memory>
@@ -130,6 +132,7 @@ public:
   DiskLayer(const std::string& name, const std::string& path, Api::OsSysCalls& os_sys_calls);
 
 private:
+#if !defined(_WIN32)
   struct Directory {
     Directory(const std::string& path) {
       dir_ = opendir(path.c_str());
@@ -142,6 +145,14 @@ private:
 
     DIR* dir_;
   };
+#else
+  struct Directory {
+    Directory(const std::string& path) {
+    }
+
+    ~Directory() { }
+  };
+#endif
 
   void walkDirectory(const std::string& path, const std::string& prefix, uint32_t depth);
 

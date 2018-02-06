@@ -275,9 +275,15 @@ ConnectionImpl::~ConnectionImpl() { nghttp2_session_del(session_); }
 void ConnectionImpl::dispatch(Buffer::Instance& data) {
   ENVOY_CONN_LOG(trace, "dispatching {} bytes", connection_, data.length());
   uint64_t num_slices = data.getRawSlices(nullptr, 0);
+#if !defined(_WIN32)
   Buffer::RawSlice slices[num_slices];
+#else
+  Buffer::RawSlice* slices =
+    reinterpret_cast<Buffer::RawSlice*>(_alloca(sizeof(Buffer::RawSlice) * num_slices));
+#endif
   data.getRawSlices(slices, num_slices);
-  for (Buffer::RawSlice& slice : slices) {
+  for (int i = 0; i < num_slices; i++) {
+    Buffer::RawSlice& slice = slices[i];
     dispatching_ = true;
     ssize_t rc =
         nghttp2_session_mem_recv(session_, static_cast<const uint8_t*>(slice.mem_), slice.len_);

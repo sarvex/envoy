@@ -40,7 +40,7 @@ void WatermarkBuffer::move(Instance& rhs, uint64_t length) {
   checkHighWatermark();
 }
 
-std::tuple<int, int> WatermarkBuffer::read(int fd, uint64_t max_length) {
+std::tuple<int, int> WatermarkBuffer::read(SOCKET_FD_TYPE fd, uint64_t max_length) {
   std::tuple<int, int> result = OwnedImpl::read(fd, max_length);
   checkHighWatermark();
   return result;
@@ -52,7 +52,7 @@ uint64_t WatermarkBuffer::reserve(uint64_t length, RawSlice* iovecs, uint64_t nu
   return bytes_reserved;
 }
 
-std::tuple<int, int> WatermarkBuffer::write(int fd) {
+std::tuple<int, int> WatermarkBuffer::write(SOCKET_FD_TYPE fd) {
   std::tuple<int, int> result = OwnedImpl::write(fd);
   checkLowWatermark();
   return result;

@@ -1,0 +1,1 @@
+add_library(ext_file_access_log_lib file_access_log_impl.cc)

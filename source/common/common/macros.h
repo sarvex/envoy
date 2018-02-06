@@ -21,7 +21,9 @@ namespace Envoy {
 /**
  * Stop the compiler from complaining about an unreferenced parameter.
  */
+#if !defined(UNREFERENCED_PARAMETER)
 #define UNREFERENCED_PARAMETER(X) ((void)(X))
+#endif
 
 /**
  * Construct On First Use idiom.

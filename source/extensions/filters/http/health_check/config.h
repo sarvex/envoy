@@ -1,6 +1,10 @@
 #pragma once
 
+#if !defined(DISABLE_PROTO_VALIDATE)
 #include "envoy/config/filter/http/health_check/v2/health_check.pb.validate.h"
+#else
+#include "envoy/config/filter/http/health_check/v2/health_check.pb.h"
+#endif
 
 #include "extensions/filters/http/common/factory_base.h"
 #include "extensions/filters/http/well_known_names.h"

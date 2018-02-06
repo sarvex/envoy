@@ -1,9 +1,12 @@
 #pragma once
-
+#if !defined(DISABLE_PROTO_VALIDATE)
 #include "envoy/config/filter/network/client_ssl_auth/v2/client_ssl_auth.pb.validate.h"
-
+#else
+#include "envoy/config/filter/network/client_ssl_auth/v2/client_ssl_auth.pb.h"
+#endif
 #include "extensions/filters/network/common/factory_base.h"
 #include "extensions/filters/network/well_known_names.h"
+#include "envoy/server/filter_config.h"
 
 namespace Envoy {
 namespace Extensions {

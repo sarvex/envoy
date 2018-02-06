@@ -1,6 +1,8 @@
 #include "common/config/tls_context_json.h"
 
+#if !defined(DISABLE_PROTO_VALIDATE)
 #include "envoy/api/v2/auth/cert.pb.validate.h"
+#endif
 
 #include "common/common/utility.h"
 #include "common/config/json_utility.h"

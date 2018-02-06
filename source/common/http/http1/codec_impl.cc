@@ -326,9 +326,15 @@ bool ConnectionImpl::maybeDirectDispatch(Buffer::Instance& data) {
 
   ssize_t total_parsed = 0;
   uint64_t num_slices = data.getRawSlices(nullptr, 0);
+#if !defined(_WIN32)
   Buffer::RawSlice slices[num_slices];
+#else
+  Buffer::RawSlice* slices =
+    reinterpret_cast<Buffer::RawSlice*>(_alloca(sizeof(Buffer::RawSlice) * num_slices));
+#endif
   data.getRawSlices(slices, num_slices);
-  for (Buffer::RawSlice& slice : slices) {
+  for (int i = 0; i < num_slices; i++) {
+	Buffer::RawSlice& slice = slices[i];
     total_parsed += slice.len_;
     onBody(static_cast<const char*>(slice.mem_), slice.len_);
   }
@@ -350,9 +356,15 @@ void ConnectionImpl::dispatch(Buffer::Instance& data) {
   ssize_t total_parsed = 0;
   if (data.length() > 0) {
     uint64_t num_slices = data.getRawSlices(nullptr, 0);
+#if !defined(_WIN32)
     Buffer::RawSlice slices[num_slices];
+#else
+    Buffer::RawSlice* slices =
+      reinterpret_cast<Buffer::RawSlice*>(_alloca(sizeof(Buffer::RawSlice) * num_slices));
+#endif
     data.getRawSlices(slices, num_slices);
-    for (Buffer::RawSlice& slice : slices) {
+    for (int i = 0; i < num_slices; i++) {
+      Buffer::RawSlice& slice = slices[i];
       total_parsed += dispatchSlice(static_cast<const char*>(slice.mem_), slice.len_);
     }
   } else {

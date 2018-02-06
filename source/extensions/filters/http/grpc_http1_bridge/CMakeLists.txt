@@ -1,0 +1,3 @@
+add_library(config_http_grpc_http1_bridge_lib config.cc)
+add_library(http1_bridge_filter_lib http1_bridge_filter.cc)
+

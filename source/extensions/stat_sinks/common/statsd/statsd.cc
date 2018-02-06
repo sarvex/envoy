@@ -34,7 +34,11 @@ Writer::~Writer() {
 }
 
 void Writer::write(const std::string& message) {
+#if !defined(_WIN32)
   ::send(fd_, message.c_str(), message.size(), MSG_DONTWAIT);
+#else
+  ::send(fd_, message.c_str(), message.size(), 0);
+#endif
 }
 
 UdpStatsdSink::UdpStatsdSink(ThreadLocal::SlotAllocator& tls,

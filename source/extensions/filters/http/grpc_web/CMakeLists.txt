@@ -1,0 +1,2 @@
+add_library(grpc_web_filter_lib grpc_web_filter.cc)
+add_library(config_http_grpc_web_lib config.cc)

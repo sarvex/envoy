@@ -14,7 +14,11 @@
 #include "common/event/file_event_impl.h"
 #include "common/event/signal_impl.h"
 #include "common/event/timer_impl.h"
+#if !defined(_WIN32)
 #include "common/filesystem/watcher_impl.h"
+#else
+#include "common/filesystem/win32/watcher_impl.h"
+#endif
 #include "common/network/connection_impl.h"
 #include "common/network/dns_impl.h"
 #include "common/network/listener_impl.h"
@@ -96,7 +100,7 @@ Network::DnsResolverSharedPtr DispatcherImpl::createDnsResolver(
   return Network::DnsResolverSharedPtr{new Network::DnsResolverImpl(*this, resolvers)};
 }
 
-FileEventPtr DispatcherImpl::createFileEvent(int fd, FileReadyCb cb, FileTriggerType trigger,
+FileEventPtr DispatcherImpl::createFileEvent(SOCKET_FD_TYPE fd, FileReadyCb cb, FileTriggerType trigger,
                                              uint32_t events) {
   ASSERT(isThreadSafe());
   return FileEventPtr{new FileEventImpl(*this, fd, cb, trigger, events)};

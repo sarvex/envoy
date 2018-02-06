@@ -4,7 +4,11 @@
 #include <string>
 
 #include "envoy/common/time.h"
+#if !defined(DISABLE_PROTO_VALIDATE)
 #include "envoy/config/filter/accesslog/v2/accesslog.pb.validate.h"
+#else
+#include "envoy/config/filter/accesslog/v2/accesslog.pb.h"
+#endif
 #include "envoy/filesystem/filesystem.h"
 #include "envoy/http/header_map.h"
 #include "envoy/runtime/runtime.h"

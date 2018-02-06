@@ -5,6 +5,7 @@
 
 #include "common/api/os_sys_calls_impl.h"
 #include "common/common/assert.h"
+#include "common/network/errormap.h"
 
 #include "event2/buffer.h"
 
@@ -34,9 +35,15 @@ void OwnedImpl::add(const std::string& data) {
 
 void OwnedImpl::add(const Instance& data) {
   uint64_t num_slices = data.getRawSlices(nullptr, 0);
+#if !defined(_WIN32)
   RawSlice slices[num_slices];
+#else
+  RawSlice *slices = reinterpret_cast<Buffer::RawSlice*>(_alloca(sizeof(Buffer::RawSlice) * num_slices));
+#endif
+
   data.getRawSlices(slices, num_slices);
-  for (RawSlice& slice : slices) {
+  for (int i = 0; i < num_slices; i++) {
+    Buffer::RawSlice& slice = slices[i];
     add(slice.mem_, slice.len_);
   }
 }
@@ -94,21 +101,26 @@ void OwnedImpl::move(Instance& rhs, uint64_t length) {
   static_cast<LibEventInstance&>(rhs).postProcess();
 }
 
-std::tuple<int, int> OwnedImpl::read(int fd, uint64_t max_length) {
+std::tuple<int, int> OwnedImpl::read(SOCKET_FD_TYPE fd, uint64_t max_length) {
   if (max_length == 0) {
     return std::make_tuple(0, 0);
   }
   constexpr uint64_t MaxSlices = 2;
   RawSlice slices[MaxSlices];
   const uint64_t num_slices = reserve(max_length, slices, MaxSlices);
-  struct iovec iov[num_slices];
+  IOVEC iov[MaxSlices];
   uint64_t num_slices_to_read = 0;
   uint64_t num_bytes_to_read = 0;
   for (; num_slices_to_read < num_slices && num_bytes_to_read < max_length; num_slices_to_read++) {
-    iov[num_slices_to_read].iov_base = slices[num_slices_to_read].mem_;
     const size_t slice_length = std::min(slices[num_slices_to_read].len_,
                                          static_cast<size_t>(max_length - num_bytes_to_read));
+#if !defined(_WIN32)
+    iov[num_slices_to_read].iov_base = slices[num_slices_to_read].mem_;
     iov[num_slices_to_read].iov_len = slice_length;
+#else
+	iov[num_slices_to_read].buf = reinterpret_cast<CHAR*>(slices[num_slices_to_read].mem_);
+	iov[num_slices_to_read].len = slice_length;
+#endif
     num_bytes_to_read += slice_length;
   }
   ASSERT(num_slices_to_read <= MaxSlices);
@@ -152,16 +164,21 @@ ssize_t OwnedImpl::search(const void* data, uint64_t size, size_t start) const {
   return result_ptr.pos;
 }
 
-std::tuple<int, int> OwnedImpl::write(int fd) {
+std::tuple<int, int> OwnedImpl::write(SOCKET_FD_TYPE fd) {
   constexpr uint64_t MaxSlices = 16;
   RawSlice slices[MaxSlices];
   const uint64_t num_slices = std::min(getRawSlices(slices, MaxSlices), MaxSlices);
-  struct iovec iov[num_slices];
+  IOVEC iov[MaxSlices];
   uint64_t num_slices_to_write = 0;
   for (uint64_t i = 0; i < num_slices; i++) {
     if (slices[i].mem_ != nullptr && slices[i].len_ != 0) {
+#if !defined(_WIN32)
       iov[num_slices_to_write].iov_base = slices[i].mem_;
       iov[num_slices_to_write].iov_len = slices[i].len_;
+#else
+	  iov[num_slices_to_write].buf = reinterpret_cast<CHAR*>(slices[i].mem_);
+	  iov[num_slices_to_write].len = slices[i].len_;
+#endif
       num_slices_to_write++;
     }
   }
@@ -170,7 +187,7 @@ std::tuple<int, int> OwnedImpl::write(int fd) {
   }
   auto& os_syscalls = Api::OsSysCallsSingleton::get();
   const ssize_t rc = os_syscalls.writev(fd, iov, num_slices_to_write);
-  const int error = errno;
+  const int error = get_socket_error();
   if (rc > 0) {
     drain(static_cast<uint64_t>(rc));
   }
@@ -187,15 +204,22 @@ OwnedImpl::OwnedImpl(const void* data, uint64_t size) : OwnedImpl() { add(data, 
 
 std::string OwnedImpl::toString() const {
   uint64_t num_slices = getRawSlices(nullptr, 0);
+#if !defined(_WIN32)
   RawSlice slices[num_slices];
+#else
+  Buffer::RawSlice* slices =
+	  reinterpret_cast<Buffer::RawSlice*>(_alloca(sizeof(Buffer::RawSlice) * num_slices));
+#endif
   getRawSlices(slices, num_slices);
   size_t len = 0;
-  for (RawSlice& slice : slices) {
+  for (int i = 0; i < num_slices; i++) {
+	RawSlice& slice = slices[i];
     len += slice.len_;
   }
   std::string output;
   output.reserve(len);
-  for (RawSlice& slice : slices) {
+  for (int i = 0; i < num_slices; i++) {
+	RawSlice& slice = slices[i];
     output.append(static_cast<const char*>(slice.mem_), slice.len_);
   }
 

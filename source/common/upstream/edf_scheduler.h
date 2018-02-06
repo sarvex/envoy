@@ -13,7 +13,11 @@ namespace Upstream {
 #if EDF_DEBUG
 #define EDF_TRACE(fmt...) ENVOY_LOG_MISC(trace, fmt)
 #else
+#if defined(_WIN32)
+#define EDF_TRACE(fmt,...)
+#else
 #define EDF_TRACE(fmt...)
+#endif
 #endif
 
 // Earliest Deadline First (EDF) scheduler

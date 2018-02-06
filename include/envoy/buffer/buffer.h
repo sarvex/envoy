@@ -7,6 +7,8 @@
 #include <tuple>
 
 #include "envoy/common/pure.h"
+#include "envoy/common/ssize.h"
+#include "envoy/common/socket_fd.h"
 
 namespace Envoy {
 namespace Buffer {
@@ -147,7 +149,7 @@ public:
    *   number of bytes read would indicate -1 and the errno would be non-zero. Otherwise, if
    *   bytes were read, errno shouldn't be used.
    */
-  virtual std::tuple<int, int> read(int fd, uint64_t max_length) PURE;
+  virtual std::tuple<int, int> read(SOCKET_FD_TYPE fd, uint64_t max_length) PURE;
 
   /**
    * Reserve space in the buffer.
@@ -180,7 +182,7 @@ public:
    *   number of bytes written would indicate -1 and the errno would be non-zero. Otherwise, if
    *   bytes were written, errno shouldn't be used.
    */
-  virtual std::tuple<int, int> write(int fd) PURE;
+  virtual std::tuple<int, int> write(SOCKET_FD_TYPE fd) PURE;
 };
 
 typedef std::unique_ptr<Instance> InstancePtr;

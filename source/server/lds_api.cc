@@ -2,8 +2,10 @@
 
 #include <unordered_map>
 
+#if !defined(DISABLE_PROTO_VALIDATE)
 #include "envoy/api/v2/lds.pb.validate.h"
 #include "envoy/api/v2/listener/listener.pb.validate.h"
+#endif
 
 #include "common/common/cleanup.h"
 #include "common/config/resources.h"

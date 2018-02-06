@@ -1,0 +1,61 @@
+{
+  // See https://go.microsoft.com//fwlink//?linkid=834763 for more information about this file.
+  "configurations" : [
+    {
+      "name" : "x86-Debug",
+      "generator" : "Ninja",
+      "configurationType" : "Debug",
+      "inheritEnvironments" : ["msvc_x86"],
+      "buildRoot" : "${env.USERPROFILE}\\CMakeBuilds\\${workspaceHash}\\build\\${name}",
+      "cmakeCommandArgs" : " -DENVOY_API_DIR:PATH=d:/envoy/envoy-api-build "
+                           "-DENVOY_THIRDPARTY_DEPENDENCIES:PATH=d:/envoy/envoy_dependencies/"
+                           "third_party_install/include -DGoogleApi_Path:PATH=d:/envoy/googleapis "
+                           "-DProtobuf_INCLUDE_DIR:PATH=D:/envoy/envoy_dependencies/"
+                           "third_party_install/include "
+                           "-DProtobuf_LIBRARIES:UNINITIALIZED=d:\\envoy\\envoy_"
+                           "dependencies\\third_party_install\\lib "
+                           "-DProtobuf_PROTOC_EXECUTABLE:FILEPATH=D:/envoy/envoy_dependencies/"
+                           "third_party_install/bin/protoc.exe",
+      "buildCommandArgs" : "-v",
+      "ctestCommandArgs" : ""
+    },
+    {
+      "name" : "x86-Release",
+      "generator" : "Ninja",
+      "configurationType" : "RelWithDebInfo",
+      "inheritEnvironments" : ["msvc_x86"],
+      "buildRoot" : "${env.USERPROFILE}\\CMakeBuilds\\${workspaceHash}\\build\\${name}",
+      "cmakeCommandArgs" : "",
+      "buildCommandArgs" : "-v",
+      "ctestCommandArgs" : ""
+    },
+    {
+      "name" : "x64-Debug",
+      "generator" : "Ninja",
+      "configurationType" : "Debug",
+      "inheritEnvironments" : ["msvc_x64"],
+      "buildRoot" : "${env.USERPROFILE}\\CMakeBuilds\\${workspaceHash}\\build\\${name}",
+      "cmakeCommandArgs" : " -DENVOY_API_DIR:PATH=d:/envoy/envoy-api-build "
+                           "-DENVOY_THIRDPARTY_DEPENDENCIES:PATH=d:/envoy/envoy_dependencies/"
+                           "third_party_install/include -DGoogleApi_Path:PATH=d:/envoy/googleapis "
+                           "-DProtobuf_INCLUDE_DIR:PATH=D:/envoy/envoy_dependencies/"
+                           "third_party_install/include "
+                           "-DProtobuf_LIBRARIES:UNINITIALIZED=d:\\envoy\\envoy_"
+                           "dependencies\\third_party_install\\lib "
+                           "-DProtobuf_PROTOC_EXECUTABLE:FILEPATH=D:/envoy/envoy_dependencies/"
+                           "third_party_install/bin/protoc.exe",
+      "buildCommandArgs" : "-v",
+      "ctestCommandArgs" : ""
+    },
+    {
+      "name" : "x64-Release",
+      "generator" : "Ninja",
+      "configurationType" : "RelWithDebInfo",
+      "inheritEnvironments" : ["msvc_x64"],
+      "buildRoot" : "${env.USERPROFILE}\\CMakeBuilds\\${workspaceHash}\\build\\${name}",
+      "cmakeCommandArgs" : "",
+      "buildCommandArgs" : "-v",
+      "ctestCommandArgs" : ""
+    }
+  ]
+}

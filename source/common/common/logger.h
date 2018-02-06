@@ -14,6 +14,12 @@
 #include "absl/strings/string_view.h"
 #include "fmt/ostream.h"
 #include "spdlog/spdlog.h"
+#if defined(WIN32)
+#undef X509_NAME
+#undef DELETE
+#undef ERROR
+#undef TRUE
+#endif
 
 namespace Envoy {
 namespace Logger {

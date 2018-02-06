@@ -1,4 +1,5 @@
 #include "common/network/raw_buffer_socket.h"
+#include "common/network/errormap.h"
 
 #include "common/common/assert.h"
 #include "common/common/empty_string.h"
@@ -28,8 +29,9 @@ IoResult RawBufferSocket::doRead(Buffer::Instance& buffer) {
       break;
     } else if (rc == -1) {
       // Remote error (might be no data).
-      ENVOY_CONN_LOG(trace, "read error: {}", callbacks_->connection(), error);
-      if (error != EAGAIN) {
+      int errorno = get_socket_error();
+      ENVOY_CONN_LOG(trace, "read error: {}", callbacks_->connection(), errorno);
+      if (errorno != EAGAIN) {
         action = PostIoAction::Close;
       }
 
@@ -53,9 +55,13 @@ IoResult RawBufferSocket::doWrite(Buffer::Instance& buffer, bool end_stream) {
   do {
     if (buffer.length() == 0) {
       if (end_stream && !shutdown_) {
-        // Ignore the result. This can only fail if the connection failed. In that case, the
-        // error will be detected on the next read, and dealt with appropriately.
+      // Ignore the result. This can only fail if the connection failed. In that case, the
+      // error will be detected on the next read, and dealt with appropriately.
+#if !defined(_WIN32)
         ::shutdown(callbacks_->fd(), SHUT_WR);
+#else
+        ::shutdown(callbacks_->fd(), SD_SEND);
+#endif
         shutdown_ = true;
       }
       action = PostIoAction::KeepOpen;
@@ -66,9 +72,10 @@ IoResult RawBufferSocket::doWrite(Buffer::Instance& buffer, bool end_stream) {
     const int error = std::get<1>(result);
     ENVOY_CONN_LOG(trace, "write returns: {}", callbacks_->connection(), rc);
     if (rc == -1) {
-      ENVOY_CONN_LOG(trace, "write error: {} ({})", callbacks_->connection(), error,
-                     strerror(error));
-      if (error == EAGAIN) {
+      int errorno = get_socket_error();
+      ENVOY_CONN_LOG(trace, "write error: {} ({})", callbacks_->connection(), errorno,
+                     strerror(errorno));
+      if (errorno == EAGAIN) {
         action = PostIoAction::KeepOpen;
       } else {
         action = PostIoAction::Close;

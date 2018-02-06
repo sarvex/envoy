@@ -1,8 +1,10 @@
 #pragma once
 
+#if !defined(_WIN32)
 #include <netinet/in.h>
 #include <netinet/ip.h>
 #include <sys/socket.h>
+#endif
 
 #include "envoy/network/listen_socket.h"
 
