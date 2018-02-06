@@ -1,6 +1,11 @@
 #include "common/filesystem/filesystem_impl.h"
 
+#if !defined(WIN32)
 #include <dirent.h>
+#else
+#include <Windows.h>
+#include <fcntl.h>
+#endif
 #include <sys/stat.h>
 
 #include <chrono>
@@ -32,6 +37,7 @@ bool fileExists(const std::string& path) {
 }
 
 bool directoryExists(const std::string& path) {
+ #if !defined(WIN32)
   DIR* const dir = opendir(path.c_str());
   const bool dir_exists = nullptr != dir;
   if (dir_exists) {
@@ -39,6 +45,15 @@ bool directoryExists(const std::string& path) {
   }
 
   return dir_exists;
+#else
+  WIN32_FIND_DATA findFileData;
+  HANDLE handle = FindFirstFile(path.c_str(), &findFileData);
+  auto dir_exists = (handle != INVALID_HANDLE_VALUE);
+  if (dir_exists) {
+    FindClose(handle);
+  }
+  return dir_exists;
+#endif
 }
 
 ssize_t fileSize(const std::string& path) {
@@ -108,8 +123,12 @@ FileImpl::FileImpl(const std::string& path, Event::Dispatcher& dispatcher,
 }
 
 void FileImpl::open() {
+#if !defined(WIN32)
   fd_ = os_sys_calls_.open(path_.c_str(), O_RDWR | O_APPEND | O_CREAT,
                            S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH);
+#else
+  fd_ = os_sys_calls_.open(path_.c_str(), O_RDWR | O_APPEND | O_CREAT, _S_IREAD | _S_IWRITE);
+#endif
 
   if (-1 == fd_) {
     throw EnvoyException(fmt::format("unable to open file '{}': {}", path_, strerror(errno)));
@@ -141,7 +160,12 @@ FileImpl::~FileImpl() {
 
 void FileImpl::doWrite(Buffer::Instance& buffer) {
   uint64_t num_slices = buffer.getRawSlices(nullptr, 0);
+#if !defined(_MSC_VER)
   Buffer::RawSlice slices[num_slices];
+#else
+  Buffer::RawSlice* slices =
+    reinterpret_cast<Buffer::RawSlice*>(_alloca(sizeof(Buffer::RawSlice) * num_slices));
+#endif
   buffer.getRawSlices(slices, num_slices);
 
   // We must do the actual writes to disk under lock, so that we don't intermix chunks from
@@ -154,7 +178,8 @@ void FileImpl::doWrite(Buffer::Instance& buffer) {
   //            process lock or had multiple locks.
   {
     std::lock_guard<Thread::BasicLockable> lock(file_lock_);
-    for (Buffer::RawSlice& slice : slices) {
+    for (int i = 0; i < num_slices; i++) {
+      Buffer::RawSlice& slice = slices[i];
       ssize_t rc = os_sys_calls_.write(fd_, slice.mem_, slice.len_);
       ASSERT(rc == static_cast<ssize_t>(slice.len_));
       stats_.write_completed_.inc();

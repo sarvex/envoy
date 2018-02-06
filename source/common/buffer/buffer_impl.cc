@@ -33,9 +33,15 @@ void OwnedImpl::add(const std::string& data) {
 
 void OwnedImpl::add(const Instance& data) {
   uint64_t num_slices = data.getRawSlices(nullptr, 0);
+#if !defined(WIN32)
   RawSlice slices[num_slices];
+#else
+  RawSlice *slices = reinterpret_cast<Buffer::RawSlice*>(_alloca(sizeof(Buffer::RawSlice) * num_slices));
+#endif
+
   data.getRawSlices(slices, num_slices);
-  for (RawSlice& slice : slices) {
+  for (int i = 0; i < num_slices; i++) {
+    Buffer::RawSlice& slice = slices[i];
     add(slice.mem_, slice.len_);
   }
 }
@@ -93,7 +99,7 @@ void OwnedImpl::move(Instance& rhs, uint64_t length) {
   static_cast<LibEventInstance&>(rhs).postProcess();
 }
 
-int OwnedImpl::read(int fd, uint64_t max_length) {
+int OwnedImpl::read(SOCKET_FD_TYPE fd, uint64_t max_length) {
   return evbuffer_read(buffer_.get(), fd, max_length);
 }
 
@@ -115,7 +121,7 @@ ssize_t OwnedImpl::search(const void* data, uint64_t size, size_t start) const {
   return result_ptr.pos;
 }
 
-int OwnedImpl::write(int fd) { return evbuffer_write(buffer_.get(), fd); }
+int OwnedImpl::write(SOCKET_FD_TYPE fd) { return evbuffer_write(buffer_.get(), fd); }
 
 OwnedImpl::OwnedImpl() : buffer_(evbuffer_new()) {}
 

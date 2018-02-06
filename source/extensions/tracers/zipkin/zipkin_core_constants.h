@@ -4,6 +4,10 @@
 
 #include "common/singleton/const_singleton.h"
 
+#if defined(ERROR)
+#undef ERROR
+#endif
+
 namespace Envoy {
 namespace Extensions {
 namespace Tracers {

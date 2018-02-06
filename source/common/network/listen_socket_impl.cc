@@ -1,6 +1,9 @@
 #include "common/network/listen_socket_impl.h"
+#include "common/network/errormap.h"
 
+#if !defined(WIN32)
 #include <sys/socket.h>
+#endif
 #include <sys/types.h>
 
 #include <string>
@@ -18,9 +21,10 @@ namespace Network {
 void ListenSocketImpl::doBind() {
   int rc = local_address_->bind(fd_);
   if (rc == -1) {
+    auto err = get_socket_error();
     close();
     throw EnvoyException(
-        fmt::format("cannot bind '{}': {}", local_address_->asString(), strerror(errno)));
+        fmt::format("cannot bind '{}': {}", local_address_->asString(), strerror(err)));
   }
   if (local_address_->type() == Address::Type::Ip && local_address_->ip()->port() == 0) {
     // If the port we bind is zero, then the OS will pick a free port for us (assuming there are
@@ -43,7 +47,7 @@ TcpListenSocket::TcpListenSocket(const Address::InstanceConstSharedPtr& address,
 
   // TODO(htuch): This might benefit from moving to SocketOptionImpl.
   int on = 1;
-  int rc = setsockopt(fd_, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+  int rc = setsockopt(fd_, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&on), sizeof(on));
   RELEASE_ASSERT(rc != -1);
 
   setListenSocketOptions(options);
@@ -59,6 +63,7 @@ TcpListenSocket::TcpListenSocket(int fd, const Address::InstanceConstSharedPtr& 
   setListenSocketOptions(options);
 }
 
+#if !defined(_MSC_VER)
 UdsListenSocket::UdsListenSocket(const Address::InstanceConstSharedPtr& address)
     : ListenSocketImpl(address->socket(Address::SocketType::Stream), address) {
   RELEASE_ASSERT(fd_ != -1);
@@ -67,6 +72,7 @@ UdsListenSocket::UdsListenSocket(const Address::InstanceConstSharedPtr& address)
 
 UdsListenSocket::UdsListenSocket(int fd, const Address::InstanceConstSharedPtr& address)
     : ListenSocketImpl(fd, address) {}
+#endif
 
 } // namespace Network
 } // namespace Envoy

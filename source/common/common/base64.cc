@@ -1,5 +1,6 @@
 #include "common/common/base64.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <string>
 
@@ -178,12 +179,18 @@ std::string Base64::encode(const Buffer::Instance& buffer, uint64_t length) {
   ret.reserve(output_length);
 
   uint64_t num_slices = buffer.getRawSlices(nullptr, 0);
+#if !defined(WIN32)
   Buffer::RawSlice slices[num_slices];
+#else
+  Buffer::RawSlice* slices =
+    reinterpret_cast<Buffer::RawSlice*>(_alloca(sizeof(Buffer::RawSlice) * num_slices));
+#endif
   buffer.getRawSlices(slices, num_slices);
 
   uint64_t j = 0;
   uint8_t next_c = 0;
-  for (Buffer::RawSlice& slice : slices) {
+  for (int i = 0; i < num_slices; i++) {
+    Buffer::RawSlice& slice = slices[i];
     const uint8_t* slice_mem = static_cast<const uint8_t*>(slice.mem_);
 
     for (uint64_t i = 0; i < slice.len_ && j < length; ++i, ++j) {

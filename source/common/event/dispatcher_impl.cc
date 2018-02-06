@@ -14,7 +14,11 @@
 #include "common/event/file_event_impl.h"
 #include "common/event/signal_impl.h"
 #include "common/event/timer_impl.h"
+#if !defined(WIN32)
 #include "common/filesystem/watcher_impl.h"
+#else
+#include "common/filesystem/win32/watcher_impl.h"
+#endif
 #include "common/network/connection_impl.h"
 #include "common/network/dns_impl.h"
 #include "common/network/listener_impl.h"

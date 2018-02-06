@@ -149,10 +149,12 @@ public:
    * @throw ProtoValidationException if the message does not satisfy its type constraints.
    */
   template <class MessageType> static void validate(const MessageType& message) {
+#if !defined(DISABLE_PROTO_VALIDATE)
     std::string err;
     if (!Validate(message, &err)) {
       throw ProtoValidationException(err, message);
     }
+#endif
   }
 
   template <class MessageType>

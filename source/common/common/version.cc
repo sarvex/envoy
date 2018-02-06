@@ -5,8 +5,14 @@
 #include "common/common/fmt.h"
 #include "common/common/macros.h"
 
+#if !defined(WIN32)
 extern const char build_scm_revision[];
 extern const char build_scm_status[];
+#else
+const char build_scm_revision[] = "171107";
+const char build_scm_status[] = "Hello";
+const char BUILD_VERSION_NUMBER[] = "1000";
+#endif
 
 namespace Envoy {
 const std::string& VersionInfo::revision() {

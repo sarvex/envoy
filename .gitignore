@@ -11,5 +11,8 @@ cscope.*
 BROWSE
 .deps
 *.pyc
-SOURCE_VERSION
 .cache
+.vs/
+
+CMakeSettings.json
+.vscode/

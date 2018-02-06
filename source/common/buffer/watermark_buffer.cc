@@ -40,7 +40,7 @@ void WatermarkBuffer::move(Instance& rhs, uint64_t length) {
   checkHighWatermark();
 }
 
-int WatermarkBuffer::read(int fd, uint64_t max_length) {
+int WatermarkBuffer::read(SOCKET_FD_TYPE fd, uint64_t max_length) {
   int bytes_read = OwnedImpl::read(fd, max_length);
   checkHighWatermark();
   return bytes_read;
@@ -52,7 +52,7 @@ uint64_t WatermarkBuffer::reserve(uint64_t length, RawSlice* iovecs, uint64_t nu
   return bytes_reserved;
 }
 
-int WatermarkBuffer::write(int fd) {
+int WatermarkBuffer::write(SOCKET_FD_TYPE fd) {
   int bytes_written = OwnedImpl::write(fd);
   checkLowWatermark();
   return bytes_written;

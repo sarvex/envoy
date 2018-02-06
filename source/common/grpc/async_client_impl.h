@@ -6,6 +6,14 @@
 #include "common/grpc/codec.h"
 #include "common/http/async_client_impl.h"
 
+#if defined(ERROR)
+#undef ERROR
+#endif
+
+#if defined(TRUE)
+#undef TRUE
+#endif
+
 namespace Envoy {
 namespace Grpc {
 

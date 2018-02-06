@@ -44,7 +44,7 @@ public:
   /**
    * Exposed for testing purposes only (but harmless to call):
    */
-  int loopIntervalForTest() const { return loop_interval_.count(); }
+  long long loopIntervalForTest() const { return loop_interval_.count(); }
   void forceCheckForTest() {
     exit_event_.notify_all();
     std::lock_guard<std::mutex> guard(exit_lock_);

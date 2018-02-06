@@ -2,12 +2,21 @@
 
 #include <fcntl.h>
 #include <sys/stat.h>
+#if !defined(WIN32)
 #include <unistd.h>
+#else
+#include <WinSock2.h>
+#undef X509_NAME
+#undef DELETE
+#undef ERROR
+#undef TRUE
+#include <io.h>
+#endif
 
 namespace Envoy {
 namespace Api {
 
-int OsSysCallsImpl::bind(int sockfd, const sockaddr* addr, socklen_t addrlen) {
+int OsSysCallsImpl::bind(SOCKET_FD_TYPE sockfd, const sockaddr* addr, socklen_t addrlen) {
   return ::bind(sockfd, addr, addrlen);
 }
 
@@ -25,6 +34,7 @@ ssize_t OsSysCallsImpl::recv(int socket, void* buffer, size_t length, int flags)
   return ::recv(socket, buffer, length, flags);
 }
 
+#if !defined(WIN32)
 int OsSysCallsImpl::shmOpen(const char* name, int oflag, mode_t mode) {
   return ::shm_open(name, oflag, mode);
 }
@@ -32,10 +42,15 @@ int OsSysCallsImpl::shmOpen(const char* name, int oflag, mode_t mode) {
 int OsSysCallsImpl::shmUnlink(const char* name) { return ::shm_unlink(name); }
 
 int OsSysCallsImpl::ftruncate(int fd, off_t length) { return ::ftruncate(fd, length); }
+#else
+int OsSysCallsImpl::ftruncate(int fd, off_t length) { return ::_chsize_s(fd, length); }
+#endif
 
+#if !defined(WIN32)
 void* OsSysCallsImpl::mmap(void* addr, size_t length, int prot, int flags, int fd, off_t offset) {
   return ::mmap(addr, length, prot, flags, fd, offset);
 }
+#endif
 
 int OsSysCallsImpl::stat(const char* pathname, struct stat* buf) { return ::stat(pathname, buf); }
 

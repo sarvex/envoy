@@ -26,7 +26,7 @@ public:
   /**
    * @return fd the socket's file descriptor.
    */
-  virtual int fd() const PURE;
+  virtual SOCKET_FD_TYPE fd() const PURE;
 
   /**
    * Close the underlying socket.

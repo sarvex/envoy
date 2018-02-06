@@ -6,6 +6,8 @@
 #include <cstdint>
 #include <iterator>
 #include <string>
+#include <vector>
+#include <cctype>
 
 #include "envoy/common/exception.h"
 
@@ -26,7 +28,11 @@ std::string DateFormatter::fromTime(const SystemTime& time) const {
 
 std::string DateFormatter::fromTime(time_t time) const {
   tm current_tm;
+#if !defined(WIN32)
   gmtime_r(&time, &current_tm);
+#else
+  gmtime_s(&current_tm, &time);
+#endif
 
   std::array<char, 1024> buf;
   strftime(&buf[0], buf.size(), format_string_.c_str(), &current_tm);
@@ -197,7 +203,7 @@ uint32_t StringUtil::itoa(char* out, size_t buffer_size, uint64_t i) {
   }
 
   *current = 0;
-  return current - out;
+  return static_cast<uint32_t>(current - out);
 }
 
 size_t StringUtil::strlcpy(char* dst, const char* src, size_t size) {
@@ -303,7 +309,11 @@ bool StringUtil::startsWith(const char* source, const std::string& start, bool c
   if (case_sensitive) {
     return strncmp(source, start.c_str(), start.size()) == 0;
   } else {
+#if !defined(WIN32)
     return strncasecmp(source, start.c_str(), start.size()) == 0;
+#else
+    return _strnicmp(source, start.c_str(), start.size()) == 0;
+#endif
   }
 }
 

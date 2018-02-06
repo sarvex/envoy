@@ -12,6 +12,23 @@
 int main(int argc, char** argv) {
   std::unique_ptr<Envoy::MainCommon> main_common;
 
+#if defined(WIN32)
+  WORD wVersionRequested;
+  WSADATA wsaData;
+  int err;
+
+  /* Use the MAKEWORD(lowbyte, highbyte) macro declared in Windef.h */
+  wVersionRequested = MAKEWORD(2, 2);
+
+  err = WSAStartup(wVersionRequested, &wsaData);
+  if (err != 0) {
+    /* Tell the user that we could not find a usable */
+    /* Winsock DLL.                                  */
+    printf("WSAStartup failed with error: %d\n", err);
+    return 1;
+  }
+#endif
+
   // Initialize the server's main context under a try/catch loop and simply return EXIT_FAILURE
   // as needed. Whatever code in the initialization path that fails is expected to log an error
   // message so the user can diagnose.

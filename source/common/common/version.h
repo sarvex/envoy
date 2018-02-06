@@ -2,7 +2,9 @@
 
 #include <string>
 
+#if !defined(WIN32)
 #include "common/common/version_number.h"
+#endif
 
 namespace Envoy {
 

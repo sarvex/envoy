@@ -1,6 +1,14 @@
 #pragma once
 
+#if !defined(WIN32)
 #include <netdb.h>
+#else
+#include <WinSock2.h>
+#undef X509_NAME
+#undef DELETE
+#undef ERROR
+#undef TRUE
+#endif
 
 #include <cstdint>
 #include <string>

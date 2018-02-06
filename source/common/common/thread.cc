@@ -15,6 +15,7 @@
 namespace Envoy {
 namespace Thread {
 
+#if !defined(WIN32)
 Thread::Thread(std::function<void()> thread_routine) : thread_routine_(thread_routine) {
   RELEASE_ASSERT(Logger::Registry::initialized());
   int rc = pthread_create(&thread_id_, nullptr,
@@ -42,6 +43,24 @@ void Thread::join() {
   int rc = pthread_join(thread_id_, nullptr);
   RELEASE_ASSERT(rc == 0);
 }
+
+#else
+  Thread::Thread(std::function<void()> thread_routine) : thread_routine_(thread_routine) {
+    thread_id_ = CreateThread(NULL, 0,
+      [](void* arg) -> DWORD WINAPI {
+      static_cast<Thread*>(arg)->thread_routine_();
+      return 0;
+    },
+      this,
+      0, // use default creation flags
+      NULL);
+    RELEASE_ASSERT(thread_id_ != NULL);
+  }
+
+  int32_t Thread::currentThreadId() { return GetCurrentThreadId(); }
+
+  void Thread::join() { WaitForSingleObject(thread_id_, INFINITE); }
+#endif
 
 } // namespace Thread
 } // namespace Envoy

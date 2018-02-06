@@ -1,7 +1,9 @@
 #include "common/runtime/runtime_impl.h"
 
 #include <fcntl.h>
+#if !defined(WIN32)
 #include <unistd.h>
+#endif
 
 #include <cstdint>
 #include <random>
@@ -231,6 +233,7 @@ DiskLayer::DiskLayer(const std::string& name, const std::string& path,
 
 void DiskLayer::walkDirectory(const std::string& path, const std::string& prefix, uint32_t depth) {
   ENVOY_LOG(debug, "walking directory: {}", path);
+#if !defined(WIN32)
   if (depth > MaxWalkDepth) {
     throw EnvoyException(fmt::format("Walk recursion depth exceded {}", MaxWalkDepth));
   }
@@ -295,6 +298,7 @@ void DiskLayer::walkDirectory(const std::string& path, const std::string& prefix
       values_.insert({full_prefix, SnapshotImpl::createEntry(value)});
     }
   }
+#endif
 }
 
 LoaderImpl::LoaderImpl(RandomGenerator& generator, Stats::Store& store,
