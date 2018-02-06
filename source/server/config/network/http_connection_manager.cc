@@ -23,7 +23,9 @@
 #include "common/protobuf/utility.h"
 #include "common/router/rds_impl.h"
 
+#if !defined(DISABLE_PROTO_VALIDATE)
 #include "api/filter/network/http_connection_manager.pb.validate.h"
+#endif
 #include "fmt/format.h"
 
 namespace Envoy {

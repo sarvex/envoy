@@ -8,7 +8,9 @@
 #include "common/config/filter_json.h"
 #include "common/filter/tcp_proxy.h"
 
+#if !defined(DISABLE_PROTO_VALIDATE)
 #include "api/filter/network/tcp_proxy.pb.validate.h"
+#endif
 
 namespace Envoy {
 namespace Server {

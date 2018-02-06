@@ -1,6 +1,6 @@
 #pragma once
 
-#include <sys/socket.h>
+#include "envoy/common/socket_fd.h"
 #include <sys/types.h>
 
 #include <array>
@@ -60,8 +60,8 @@ public:
   virtual bool isAnyAddress() const PURE;
 
   /**
-   * @return whether this address is a valid unicast address, i.e., not an wild card, broadcast, or
-   * multicast address.
+   * @return whether this address is a valid unicast address, i.e., not an wild card, broadcast,
+   * or multicast address.
    */
   virtual bool isUnicastAddress() const PURE;
 
@@ -76,8 +76,8 @@ public:
   virtual const Ipv6* ipv6() const PURE;
 
   /**
-   * @return the port associated with the address. Port may be zero if not specified or applicable.
-   *         The port is in host byte order.
+   * @return the port associated with the address. Port may be zero if not specified or
+   * applicable. The port is in host byte order.
    */
   virtual uint32_t port() const PURE;
 
@@ -126,7 +126,7 @@ public:
    * @param fd supplies the platform socket handle.
    * @return the platform error code.
    */
-  virtual int bind(int fd) const PURE;
+  virtual int bind(SOCKET_FD_TYPE fd) const PURE;
 
   /**
    * Connect a socket to this address. The socket should have been created with a call to socket()
@@ -134,7 +134,7 @@ public:
    * @param fd supplies the platform socket handle.
    * @return the platform error code.
    */
-  virtual int connect(int fd) const PURE;
+  virtual int connect(SOCKET_FD_TYPE fd) const PURE;
 
   /**
    * @return the IP address information IFF type() == Type::Ip, otherwise nullptr.
@@ -146,7 +146,7 @@ public:
    * @param type supplies the socket type to create.
    * @return the platform error code.
    */
-  virtual int socket(SocketType type) const PURE;
+  virtual SOCKET_FD_TYPE socket(SocketType type) const PURE;
 
   /**
    * @return the type of address.

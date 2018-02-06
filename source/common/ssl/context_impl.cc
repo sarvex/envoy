@@ -66,6 +66,7 @@ ContextImpl::ContextImpl(ContextManagerImpl& parent, Stats::Scope& scope,
       throw EnvoyException(
           fmt::format("Failed to load trusted CA certificates from {}", config.caCertPath()));
     }
+#if !defined(_MSC_VER)
     for (const X509_INFO* item : list.get()) {
       if (item->x509) {
         X509_STORE_add_cert(SSL_CTX_get_cert_store(ctx_.get()), item->x509);
@@ -78,6 +79,22 @@ ContextImpl::ContextImpl(ContextManagerImpl& parent, Stats::Scope& scope,
         X509_STORE_add_crl(SSL_CTX_get_cert_store(ctx_.get()), item->crl);
       }
     }
+#else
+    auto stack = list.get();
+    for (int i = 0; i < sk_X509_INFO_num(stack);  i++) {
+      const X509_INFO* item = sk_X509_INFO_value(stack, i);
+      if (item->x509) {
+        X509_STORE_add_cert(SSL_CTX_get_cert_store(ctx_.get()), item->x509);
+        if (ca_cert_ == nullptr) {
+          X509_up_ref(item->x509);
+          ca_cert_.reset(item->x509);
+        }
+      }
+      if (item->crl) {
+        X509_STORE_add_crl(SSL_CTX_get_cert_store(ctx_.get()), item->crl);
+      }
+    }
+#endif
     if (ca_cert_ == nullptr) {
       throw EnvoyException(
           fmt::format("Failed to load trusted CA certificates from {}", config.caCertPath()));

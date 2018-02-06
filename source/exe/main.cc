@@ -15,6 +15,15 @@
 
 #include "spdlog/spdlog.h"
 
+#if defined(WIN32)
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#undef X509_NAME
+#undef DELETE
+#undef ERROR
+#undef TRUE
+#endif
+
 // NOLINT(namespace-envoy)
 
 /**
@@ -25,6 +34,23 @@
  * after setting up command line options.
  */
 int main(int argc, char** argv) {
+#if defined(WIN32)
+  WORD wVersionRequested;
+  WSADATA wsaData;
+  int err;
+
+  /* Use the MAKEWORD(lowbyte, highbyte) macro declared in Windef.h */
+  wVersionRequested = MAKEWORD(2, 2);
+
+  err = WSAStartup(wVersionRequested, &wsaData);
+  if (err != 0) {
+    /* Tell the user that we could not find a usable */
+    /* Winsock DLL.                                  */
+    printf("WSAStartup failed with error: %d\n", err);
+    return 1;
+  }
+#endif
+
 #ifdef ENVOY_HANDLE_SIGNALS
   // Enabled by default. Control with "bazel --define=signal_trace=disabled"
   Envoy::SignalAction handle_sigs;

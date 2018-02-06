@@ -1,6 +1,8 @@
 #pragma once
 
+#if !defined(WIN32)
 #include <dirent.h>
+#endif
 
 #include <cstdint>
 #include <memory>
@@ -93,6 +95,7 @@ public:
   const std::unordered_map<std::string, const Snapshot::Entry>& getAll() const override;
 
 private:
+#if !defined(WIN32)
   struct Directory {
     Directory(const std::string& path) {
       dir_ = opendir(path.c_str());
@@ -105,6 +108,14 @@ private:
 
     DIR* dir_;
   };
+#else
+  struct Directory {
+    Directory(const std::string& path) {
+    }
+
+    ~Directory() { }
+  };
+#endif
 
   void walkDirectory(const std::string& path, const std::string& prefix);
 

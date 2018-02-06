@@ -12,7 +12,9 @@
 #include "common/protobuf/utility.h"
 #include "common/upstream/sds_subscription.h"
 
+#if !defined(DISABLE_PROTO_VALIDATE)
 #include "api/eds.pb.validate.h"
+#endif
 #include "fmt/format.h"
 
 namespace Envoy {

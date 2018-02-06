@@ -5,7 +5,9 @@
 #include "common/config/filter_json.h"
 #include "common/http/filter/fault_filter.h"
 
+#if !defined(DISABLE_PROTO_VALIDATE)
 #include "api/filter/http/fault.pb.validate.h"
+#endif
 
 namespace Envoy {
 namespace Server {

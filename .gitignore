@@ -12,3 +12,7 @@ BROWSE
 .deps
 *.pyc
 SOURCE_VERSION
+.vs/
+
+CMakeSettings.json
+.vscode/

@@ -9,7 +9,9 @@
 #include "common/stats/statsd.h"
 
 #include "api/stats.pb.h"
+#if !defined(DISABLE_PROTO_VALIDATE)
 #include "api/stats.pb.validate.h"
+#endif
 
 namespace Envoy {
 namespace Server {

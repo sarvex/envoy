@@ -4,7 +4,9 @@
 #include "common/config/json_utility.h"
 #include "common/protobuf/utility.h"
 
+#if !defined(DISABLE_PROTO_VALIDATE)
 #include "api/sds.pb.validate.h"
+#endif
 
 namespace Envoy {
 namespace Config {

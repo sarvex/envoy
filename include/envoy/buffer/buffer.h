@@ -6,6 +6,8 @@
 #include <string>
 
 #include "envoy/common/pure.h"
+#include "envoy/common/ssize.h"
+#include "envoy/common/socket_fd.h"
 
 namespace Envoy {
 namespace Buffer {
@@ -144,7 +146,7 @@ public:
    * @param max_length supplies the maximum length to read.
    * @return the number of bytes read or -1 if there was an error.
    */
-  virtual int read(int fd, uint64_t max_length) PURE;
+  virtual int read(SOCKET_FD_TYPE fd, uint64_t max_length) PURE;
 
   /**
    * Reserve space in the buffer.
@@ -169,7 +171,7 @@ public:
    * @param fd supplies the descriptor to write to.
    * @return the number of bytes written or -1 if there was an error.
    */
-  virtual int write(int fd) PURE;
+  virtual int write(SOCKET_FD_TYPE fd) PURE;
 };
 
 typedef std::unique_ptr<Instance> InstancePtr;

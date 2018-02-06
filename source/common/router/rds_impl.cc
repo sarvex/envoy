@@ -13,7 +13,9 @@
 #include "common/router/config_impl.h"
 #include "common/router/rds_subscription.h"
 
+#if !defined(DISABLE_PROTO_VALIDATE)
 #include "api/rds.pb.validate.h"
+#endif
 #include "fmt/format.h"
 
 namespace Envoy {

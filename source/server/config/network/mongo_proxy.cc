@@ -8,7 +8,9 @@
 #include "common/config/filter_json.h"
 #include "common/mongo/proxy.h"
 
+#if !defined(DISABLE_PROTO_VALIDATE)
 #include "api/filter/network/mongo_proxy.pb.validate.h"
+#endif
 #include "fmt/format.h"
 
 namespace Envoy {

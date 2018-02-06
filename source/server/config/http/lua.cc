@@ -5,7 +5,9 @@
 #include "common/config/filter_json.h"
 #include "common/http/filter/lua/lua_filter.h"
 
+#if !defined(DISABLE_PROTO_VALIDATE)
 #include "api/filter/http/lua.pb.validate.h"
+#endif
 
 namespace Envoy {
 namespace Server {

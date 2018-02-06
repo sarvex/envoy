@@ -10,7 +10,9 @@
 #include "server/configuration_impl.h"
 
 #include "api/bootstrap.pb.h"
+#if !defined(DISABLE_PROTO_VALIDATE)
 #include "api/bootstrap.pb.validate.h"
+#endif
 
 namespace Envoy {
 namespace Server {

@@ -23,7 +23,9 @@
 #include "common/http/headers.h"
 #include "common/http/utility.h"
 #include "common/protobuf/utility.h"
+#if !defined(WIN32)
 #include "common/redis/conn_pool_impl.h"
+#endif
 #include "common/upstream/host_utility.h"
 
 namespace Envoy {
@@ -40,6 +42,8 @@ HealthCheckerSharedPtr HealthCheckerFactory::create(const envoy::api::v2::Health
                                                        random);
   case envoy::api::v2::HealthCheck::HealthCheckerCase::kTcpHealthCheck:
     return std::make_shared<TcpHealthCheckerImpl>(cluster, hc_config, dispatcher, runtime, random);
+
+#if !defined(WIN32)
   case envoy::api::v2::HealthCheck::HealthCheckerCase::kRedisHealthCheck:
     return std::make_shared<RedisHealthCheckerImpl>(cluster, hc_config, dispatcher, runtime, random,
                                                     Redis::ConnPool::ClientFactoryImpl::instance_);
@@ -50,6 +54,8 @@ HealthCheckerSharedPtr HealthCheckerFactory::create(const envoy::api::v2::Health
     }
     return std::make_shared<ProdGrpcHealthCheckerImpl>(cluster, hc_config, dispatcher, runtime,
                                                        random);
+#endif
+
   default:
     // TODO(htuch): This should be subsumed eventually by the constraint checking in #1308.
     throw EnvoyException("Health checker type not set");
@@ -519,6 +525,7 @@ void TcpHealthCheckerImpl::TcpActiveHealthCheckSession::onTimeout() {
   client_->close(Network::ConnectionCloseType::NoFlush);
 }
 
+#if !defined(WIN32)
 RedisHealthCheckerImpl::RedisHealthCheckerImpl(const Cluster& cluster,
                                                const envoy::api::v2::HealthCheck& config,
                                                Event::Dispatcher& dispatcher,
@@ -594,6 +601,7 @@ RedisHealthCheckerImpl::HealthCheckRequest::HealthCheckRequest() {
   request_.type(Redis::RespType::Array);
   request_.asArray().swap(values);
 }
+#endif
 
 GrpcHealthCheckerImpl::GrpcHealthCheckerImpl(const Cluster& cluster,
                                              const envoy::api::v2::HealthCheck& config,

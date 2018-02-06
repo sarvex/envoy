@@ -11,7 +11,9 @@
 #include "common/redis/conn_pool_impl.h"
 #include "common/redis/proxy_filter.h"
 
+#if !defined(DISABLE_PROTO_VALIDATE)
 #include "api/filter/network/redis_proxy.pb.validate.h"
+#endif
 
 namespace Envoy {
 namespace Server {

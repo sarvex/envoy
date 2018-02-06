@@ -9,7 +9,9 @@
 #include "common/protobuf/utility.h"
 #include "common/upstream/cds_subscription.h"
 
+#if !defined(DISABLE_PROTO_VALIDATE)
 #include "api/cds.pb.validate.h"
+#endif
 
 namespace Envoy {
 namespace Upstream {

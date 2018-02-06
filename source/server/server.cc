@@ -36,7 +36,9 @@
 #include "server/test_hooks.h"
 
 #include "api/bootstrap.pb.h"
+#if !defined(DISABLE_PROTO_VALIDATE)
 #include "api/bootstrap.pb.validate.h"
+#endif
 
 namespace Envoy {
 namespace Server {
@@ -322,6 +324,7 @@ RunHelper::RunHelper(Event::Dispatcher& dispatcher, Upstream::ClusterManager& cm
     dispatcher.exit();
   });
 
+#if !defined(WIN32)
   sig_usr_1_ = dispatcher.listenForSignal(SIGUSR1, [&access_log_manager]() {
     ENVOY_LOG(warn, "caught SIGUSR1");
     access_log_manager.reopen();
@@ -330,6 +333,7 @@ RunHelper::RunHelper(Event::Dispatcher& dispatcher, Upstream::ClusterManager& cm
   sig_hup_ = dispatcher.listenForSignal(SIGHUP, []() {
     ENVOY_LOG(warn, "caught and eating SIGHUP. See documentation for how to hot restart.");
   });
+#endif
 
   // Register for cluster manager init notification. We don't start serving worker traffic until
   // upstream clusters are initialized which may involve running the event loop. Note however that
@@ -390,7 +394,11 @@ Runtime::Loader& InstanceImpl::runtime() { return *runtime_loader_; }
 
 void InstanceImpl::shutdown() {
   ENVOY_LOG(info, "shutdown invoked. sending SIGTERM to self");
+#if !defined(WIN32)
   kill(getpid(), SIGTERM);
+#else
+  ExitProcess(0);
+#endif
 }
 
 void InstanceImpl::shutdownAdmin() {

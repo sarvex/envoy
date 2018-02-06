@@ -9,7 +9,9 @@
 #include "common/http/filter/ratelimit.h"
 #include "common/protobuf/utility.h"
 
+#if !defined(DISABLE_PROTO_VALIDATE)
 #include "api/filter/http/rate_limit.pb.validate.h"
+#endif
 
 namespace Envoy {
 namespace Server {

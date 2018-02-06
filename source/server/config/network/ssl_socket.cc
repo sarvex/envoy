@@ -8,7 +8,9 @@
 #include "common/ssl/ssl_socket.h"
 
 #include "api/sds.pb.h"
+#if !defined(DISABLE_PROTO_VALIDATE)
 #include "api/sds.pb.validate.h"
+#endif
 
 namespace Envoy {
 namespace Server {

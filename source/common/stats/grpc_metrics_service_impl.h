@@ -15,7 +15,9 @@
 #include "common/buffer/buffer_impl.h"
 
 #include "api/metrics_service.pb.h"
+#if !defined(DISABLE_PROTO_VALIDATE)
 #include "api/metrics_service.pb.validate.h"
+#endif
 
 namespace Envoy {
 namespace Stats {

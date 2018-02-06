@@ -1,6 +1,14 @@
 #pragma once
 
+#if !defined(WIN32)
 #include <unistd.h>
+#else
+#include <winsock2.h>
+#undef X509_NAME
+#undef DELETE
+#undef ERROR
+#undef TRUE
+#endif
 
 #include <memory>
 #include <string>
@@ -19,19 +27,28 @@ public:
 
   // Network::ListenSocket
   Address::InstanceConstSharedPtr localAddress() const override { return local_address_; }
-  int fd() override { return fd_; }
+  SOCKET_FD_TYPE fd() override { return fd_; }
 
+#if !defined(WIN32)
   void close() override {
     if (fd_ != -1) {
       ::close(fd_);
       fd_ = -1;
     }
   }
+#else
+  void close() override {
+    if (fd_ != -1) {
+      ::closesocket(fd_);
+      fd_ = -1;
+    }
+  }
+#endif
 
 protected:
   void doBind();
 
-  int fd_;
+  SOCKET_FD_TYPE fd_;
   Address::InstanceConstSharedPtr local_address_;
 };
 
@@ -46,10 +63,12 @@ public:
 
 typedef std::unique_ptr<TcpListenSocket> TcpListenSocketPtr;
 
+#if !defined(WIN32)
 class UdsListenSocket : public ListenSocketImpl {
 public:
   UdsListenSocket(const std::string& uds_path);
 };
+#endif
 
 class ConnectionSocketImpl : virtual public ConnectionSocket {
 public:

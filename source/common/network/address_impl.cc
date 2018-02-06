@@ -1,9 +1,14 @@
 #include "common/network/address_impl.h"
+#include "common/network/errormap.h"
 
+#if defined(WIN32)
+typedef unsigned int sa_family_t;
+#else
 #include <arpa/inet.h>
 #include <netinet/ip.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#endif
 
 #include <array>
 #include <cstdint>
@@ -40,49 +45,59 @@ Address::InstanceConstSharedPtr addressFromSockAddr(const sockaddr_storage& ss, 
 #define s6_addr32 __u6_addr.__u6_addr32
 #endif
 #endif
+#if !defined (WIN32)
       struct sockaddr_in sin = {.sin_family = AF_INET,
                                 .sin_port = sin6->sin6_port,
                                 .sin_addr = {.s_addr = sin6->sin6_addr.s6_addr32[3]},
                                 .sin_zero = {}};
+#else
+      DWORD* sinaddr = (DWORD*)(sin6->sin6_addr.s6_addr);
+      struct sockaddr_in sin = { AF_INET,
+        sin6->sin6_port,
+        { sinaddr[3] },
+        {} };
+#endif
       return std::make_shared<Address::Ipv4Instance>(&sin);
     } else {
       return std::make_shared<Address::Ipv6Instance>(*sin6, v6only);
     }
   }
+#if !defined(WIN32)
   case AF_UNIX: {
     const struct sockaddr_un* sun = reinterpret_cast<const struct sockaddr_un*>(&ss);
     ASSERT(AF_UNIX == sun->sun_family);
     RELEASE_ASSERT(ss_len == 0 || ss_len >= offsetof(struct sockaddr_un, sun_path) + 1);
     return std::make_shared<Address::PipeInstance>(sun);
   }
+#endif
   default:
     throw EnvoyException(fmt::format("Unexpected sockaddr family: {}", ss.ss_family));
   }
   NOT_REACHED;
 }
 
-InstanceConstSharedPtr addressFromFd(int fd) {
+InstanceConstSharedPtr addressFromFd(SOCKET_FD_TYPE fd) {
   sockaddr_storage ss;
   socklen_t ss_len = sizeof ss;
   int rc = ::getsockname(fd, reinterpret_cast<sockaddr*>(&ss), &ss_len);
   if (rc != 0) {
     throw EnvoyException(
-        fmt::format("getsockname failed for '{}': ({}) {}", fd, errno, strerror(errno)));
+        fmt::format("getsockname failed for '{}': ({}) {}", fd, errno, strerror(get_socket_error())));
   }
   int socket_v6only = 0;
   if (ss.ss_family == AF_INET6) {
     socklen_t size_int = sizeof(socket_v6only);
-    RELEASE_ASSERT(::getsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &socket_v6only, &size_int) == 0);
+    RELEASE_ASSERT(::getsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, (char*)&socket_v6only, &size_int) == 0);
   }
   return addressFromSockAddr(ss, ss_len, rc == 0 && socket_v6only);
 }
 
-InstanceConstSharedPtr peerAddressFromFd(int fd) {
+InstanceConstSharedPtr peerAddressFromFd(SOCKET_FD_TYPE fd) {
   sockaddr_storage ss;
   socklen_t ss_len = sizeof ss;
   const int rc = ::getpeername(fd, reinterpret_cast<sockaddr*>(&ss), &ss_len);
   if (rc != 0) {
-    throw EnvoyException(fmt::format("getpeername failed for '{}': {}", fd, strerror(errno)));
+    throw EnvoyException(fmt::format("getpeername failed for '{}': {}", fd, strerror(get_socket_error())));
   }
 #ifdef __APPLE__
   if (ss_len == sizeof(sockaddr) && ss.ss_family == AF_UNIX) {
@@ -95,14 +110,14 @@ InstanceConstSharedPtr peerAddressFromFd(int fd) {
     ss_len = sizeof ss;
     const int rc = ::getsockname(fd, reinterpret_cast<sockaddr*>(&ss), &ss_len);
     if (rc != 0) {
-      throw EnvoyException(fmt::format("getsockname failed for '{}': {}", fd, strerror(errno)));
+      throw EnvoyException(fmt::format("getsockname failed for '{}': {}", fd, strerror(get_socket_error())));
     }
   }
   return addressFromSockAddr(ss, ss_len);
 }
 
-int InstanceBase::socketFromSocketType(SocketType socketType) const {
-#if defined(__APPLE__)
+SOCKET_FD_TYPE InstanceBase::socketFromSocketType(SocketType socketType) const {
+#if defined(__APPLE__) || defined(WIN32)
   int flags = 0;
 #else
   int flags = SOCK_NONBLOCK;
@@ -128,12 +143,17 @@ int InstanceBase::socketFromSocketType(SocketType socketType) const {
     domain = AF_UNIX;
   }
 
-  int fd = ::socket(domain, flags, 0);
+  SOCKET_FD_TYPE fd = ::socket(domain, flags, 0);
   RELEASE_ASSERT(fd != -1);
 
 #ifdef __APPLE__
   // Cannot set SOCK_NONBLOCK as a ::socket flag.
   RELEASE_ASSERT(fcntl(fd, F_SETFL, O_NONBLOCK) != -1);
+#endif
+#if defined(WIN32)
+  // Cannot set SOCK_NONBLOCK as a ::socket flag.
+  u_long iMode = 1;
+  RELEASE_ASSERT(ioctlsocket(fd, FIONBIO, &iMode) == 0);
 #endif
 
   return fd;
@@ -171,17 +191,17 @@ Ipv4Instance::Ipv4Instance(uint32_t port) : InstanceBase(Type::Ip) {
   ip_.friendly_address_ = "0.0.0.0";
 }
 
-int Ipv4Instance::bind(int fd) const {
+int Ipv4Instance::bind(SOCKET_FD_TYPE fd) const {
   return ::bind(fd, reinterpret_cast<const sockaddr*>(&ip_.ipv4_.address_),
                 sizeof(ip_.ipv4_.address_));
 }
 
-int Ipv4Instance::connect(int fd) const {
+int Ipv4Instance::connect(SOCKET_FD_TYPE fd) const {
   return ::connect(fd, reinterpret_cast<const sockaddr*>(&ip_.ipv4_.address_),
                    sizeof(ip_.ipv4_.address_));
 }
 
-int Ipv4Instance::socket(SocketType type) const { return socketFromSocketType(type); }
+SOCKET_FD_TYPE Ipv4Instance::socket(SocketType type) const { return socketFromSocketType(type); }
 
 std::array<uint8_t, 16> Ipv6Instance::Ipv6Helper::address() const {
   std::array<uint8_t, 16> result;
@@ -226,25 +246,26 @@ Ipv6Instance::Ipv6Instance(const std::string& address, uint32_t port) : Instance
 
 Ipv6Instance::Ipv6Instance(uint32_t port) : Ipv6Instance("", port) {}
 
-int Ipv6Instance::bind(int fd) const {
+int Ipv6Instance::bind(SOCKET_FD_TYPE fd) const {
   return ::bind(fd, reinterpret_cast<const sockaddr*>(&ip_.ipv6_.address_),
                 sizeof(ip_.ipv6_.address_));
 }
 
-int Ipv6Instance::connect(int fd) const {
+int Ipv6Instance::connect(SOCKET_FD_TYPE fd) const {
   return ::connect(fd, reinterpret_cast<const sockaddr*>(&ip_.ipv6_.address_),
                    sizeof(ip_.ipv6_.address_));
 }
 
-int Ipv6Instance::socket(SocketType type) const {
-  const int fd = socketFromSocketType(type);
+SOCKET_FD_TYPE Ipv6Instance::socket(SocketType type) const {
+  const SOCKET_FD_TYPE fd = socketFromSocketType(type);
 
-  // Setting IPV6_V6ONLY resticts the IPv6 socket to IPv6 connections only.
+  // Setting IPV6_V6ONLY restricts the IPv6 socket to IPv6 connections only.
   const int v6only = ip_.v6only_;
-  RELEASE_ASSERT(::setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &v6only, sizeof(v6only)) != -1);
+  RELEASE_ASSERT(::setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, reinterpret_cast<const char*>(&v6only), sizeof(v6only)) != -1);
   return fd;
 }
 
+#if !defined(WIN32)
 PipeInstance::PipeInstance(const sockaddr_un* address) : InstanceBase(Type::Pipe) {
   if (address->sun_path[0] == '\0') {
     throw EnvoyException("Abstract AF_UNIX sockets not supported.");
@@ -269,6 +290,7 @@ int PipeInstance::connect(int fd) const {
 }
 
 int PipeInstance::socket(SocketType type) const { return socketFromSocketType(type); }
+#endif
 
 } // namespace Address
 } // namespace Network

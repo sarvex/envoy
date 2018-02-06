@@ -12,8 +12,12 @@ namespace Api {
 /**
  * Implementation of Api::Api
  */
+#if !defined(_MSC_VER)
 class Impl : public Api::Api {
-public:
+#else
+class Impl : public Api {
+#endif
+  public:
   Impl(std::chrono::milliseconds file_flush_interval_msec);
 
   // Api::Api

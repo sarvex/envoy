@@ -9,7 +9,9 @@
 #include "common/router/router.h"
 #include "common/router/shadow_writer_impl.h"
 
+#if !defined(DISABLE_PROTO_VALIDATE)
 #include "api/filter/http/router.pb.validate.h"
+#endif
 
 namespace Envoy {
 namespace Server {

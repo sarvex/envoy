@@ -13,7 +13,9 @@
 #include "envoy/http/codec.h"
 #include "envoy/network/connection.h"
 #include "envoy/network/filter.h"
+#if !defined(WIN32)
 #include "envoy/redis/conn_pool.h"
+#endif
 #include "envoy/runtime/runtime.h"
 #include "envoy/upstream/health_checker.h"
 
@@ -24,7 +26,11 @@
 #include "common/protobuf/protobuf.h"
 
 #include "api/health_check.pb.h"
+#if !defined(WIN32)
 #include "src/proto/grpc/health/v1/health.pb.h"
+#else
+#include "health/health.pb.h"
+#endif
 
 namespace Envoy {
 namespace Upstream {
@@ -356,6 +362,7 @@ private:
   const TcpHealthCheckMatcher::MatchSegments receive_bytes_;
 };
 
+#if !defined(WIN32)
 /**
  * Redis health checker implementation. Sends PING and expects PONG.
  */
@@ -419,6 +426,7 @@ private:
 
   Redis::ConnPool::ClientFactory& client_factory_;
 };
+#endif
 
 /**
  * gRPC health checker implementation.

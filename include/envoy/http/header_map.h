@@ -115,9 +115,14 @@ public:
       return false;
     }
 
+    // convert to lower case and use strstr. Converts to lower case once
+    LowerCaseString lowerTokensStr = LowerCaseString(std::string(c_str()));
+    LowerCaseString lowerTokenStr = LowerCaseString(std::string(token));
+
     // Find token substring, skip if it's partial of other token.
-    const char* tokens = c_str();
-    for (const char* p = tokens; (p = strcasestr(p, token)); p += n) {
+    const char* tokens = lowerTokensStr.get().c_str();
+    const char* lowerToken = lowerTokenStr.get().c_str();
+    for (const char* p = tokens; (p = strstr(p, lowerToken)); p += n) {
       if ((p == tokens || *(p - 1) == ' ' || *(p - 1) == ',') &&
           (*(p + n) == '\0' || *(p + n) == ' ' || *(p + n) == ',')) {
         return true;

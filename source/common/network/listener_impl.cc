@@ -1,6 +1,9 @@
 #include "common/network/listener_impl.h"
+#include "common/network/errormap.h"
 
+#if !defined(WIN32)
 #include <sys/un.h>
+#endif
 
 #include "envoy/common/exception.h"
 
@@ -16,7 +19,7 @@
 namespace Envoy {
 namespace Network {
 
-Address::InstanceConstSharedPtr ListenerImpl::getLocalAddress(int fd) {
+Address::InstanceConstSharedPtr ListenerImpl::getLocalAddress(evutil_socket_t fd) {
   return Address::addressFromFd(fd);
 }
 
@@ -69,7 +72,7 @@ ListenerImpl::ListenerImpl(Event::DispatcherImpl& dispatcher, ListenSocket& sock
 void ListenerImpl::errorCallback(evconnlistener*, void*) {
   // We should never get an error callback. This can happen if we run out of FDs or memory. In those
   // cases just crash.
-  PANIC(fmt::format("listener accept failure: {}", strerror(errno)));
+  PANIC(fmt::format("listener accept failure: {}", strerror(get_socket_error())));
 }
 
 } // namespace Network

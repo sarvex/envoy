@@ -6,6 +6,13 @@
 
 #include "envoy/thread/thread.h"
 
+#if defined(WIN32)
+#include <WinSock2.h>
+#include <Windows.h>
+#undef DELETE
+#undef ERROR
+#endif
+
 namespace Envoy {
 namespace Thread {
 
@@ -31,7 +38,11 @@ public:
 
 private:
   std::function<void()> thread_routine_;
+#if !defined(WIN32)
   pthread_t thread_id_;
+#else
+  HANDLE thread_id_;
+#endif
 };
 
 typedef std::unique_ptr<Thread> ThreadPtr;

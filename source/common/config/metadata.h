@@ -5,6 +5,9 @@
 #include "common/protobuf/protobuf.h"
 #include "common/singleton/const_singleton.h"
 
+#if defined(WIN32)
+#undef DELETE
+#endif
 #include "api/base.pb.h"
 
 namespace Envoy {

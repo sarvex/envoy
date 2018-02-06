@@ -1,9 +1,12 @@
 #include "common/network/connection_impl.h"
+#include "common/network/errormap.h"
 
+#if !defined(WIN32)
 #include <netinet/tcp.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
+#endif
 
 #include <atomic>
 #include <cstdint>
@@ -175,12 +178,22 @@ void ConnectionImpl::noDelay(bool enable) {
 
   // Set NODELAY
   int new_value = enable;
-  rc = setsockopt(fd(), IPPROTO_TCP, TCP_NODELAY, &new_value, sizeof(new_value));
+  rc = setsockopt(fd(), IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&new_value), sizeof(new_value));
 #ifdef __APPLE__
   if (-1 == rc && errno == EINVAL) {
     // Sometimes occurs when the connection is not yet fully formed. Empirically, TCP_NODELAY is
     // enabled despite this result.
     return;
+  }
+#endif
+#if defined(WIN32)
+  if (-1 == rc) {
+    auto err = get_socket_error();
+    if (err == EWOULDBLOCK || err == EINVAL) {
+      // Sometimes occurs when the connection is not yet fully formed. Empirically, TCP_NODELAY is
+      // enabled despite this result.
+      return;
+    }
   }
 #endif
 
@@ -405,7 +418,7 @@ void ConnectionImpl::onWriteReady() {
   if (connecting_) {
     int error;
     socklen_t error_size = sizeof(error);
-    int rc = getsockopt(fd(), SOL_SOCKET, SO_ERROR, &error, &error_size);
+    int rc = getsockopt(fd(), SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&error), &error_size);
     ASSERT(0 == rc);
     UNREFERENCED_PARAMETER(rc);
 

@@ -1,5 +1,6 @@
 #include "common/network/utility.h"
 
+#if !defined(WIN32)
 #include <arpa/inet.h>
 #include <ifaddrs.h>
 
@@ -9,6 +10,13 @@
 
 #include <netinet/ip.h>
 #include <sys/socket.h>
+#else
+#include <WinSock2.h>
+#undef X509_NAME
+#undef DELETE
+#undef ERROR
+#undef TRUE
+#endif
 
 #include <cstdint>
 #include <list>
@@ -36,10 +44,14 @@ const std::string Utility::UNIX_SCHEME = "unix://";
 Address::InstanceConstSharedPtr Utility::resolveUrl(const std::string& url) {
   if (urlIsTcpScheme(url)) {
     return parseInternetAddressAndPort(url.substr(TCP_SCHEME.size()));
-  } else if (urlIsUnixScheme(url)) {
+  } 
+#if !defined(WIN32)
+  else if (urlIsUnixScheme(url)) {
     return Address::InstanceConstSharedPtr{
         new Address::PipeInstance(url.substr(UNIX_SCHEME.size()))};
-  } else {
+  }
+#endif
+  else {
     throw EnvoyException(fmt::format("unknown protocol scheme: {}", url));
   }
 }
@@ -159,9 +171,10 @@ void Utility::throwWithMalformedIp(const std::string& ip_address) {
 // the default is to return a loopback address of type version. This function may
 // need to be updated in the future. Discussion can be found at Github issue #939.
 Address::InstanceConstSharedPtr Utility::getLocalAddress(const Address::IpVersion version) {
+  Address::InstanceConstSharedPtr ret;
+#if !defined(WIN32)
   struct ifaddrs* ifaddr;
   struct ifaddrs* ifa;
-  Address::InstanceConstSharedPtr ret;
 
   int rc = getifaddrs(&ifaddr);
   RELEASE_ASSERT(!rc);
@@ -188,6 +201,7 @@ Address::InstanceConstSharedPtr Utility::getLocalAddress(const Address::IpVersio
   if (ifaddr) {
     freeifaddrs(ifaddr);
   }
+#endif
 
   // If the local address is not found above, then return the loopback addresss by default.
   if (ret == nullptr) {
@@ -281,7 +295,7 @@ Address::InstanceConstSharedPtr Utility::getAddressWithPort(const Address::Insta
   NOT_REACHED;
 }
 
-Address::InstanceConstSharedPtr Utility::getOriginalDst(int fd) {
+Address::InstanceConstSharedPtr Utility::getOriginalDst(SOCKET_FD_TYPE fd) {
 #ifdef SOL_IP
   sockaddr_storage orig_addr;
   socklen_t addr_len = sizeof(sockaddr_storage);

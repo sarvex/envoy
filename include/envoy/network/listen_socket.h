@@ -23,7 +23,7 @@ public:
   /**
    * @return fd the listen socket's file descriptor.
    */
-  virtual int fd() PURE;
+  virtual SOCKET_FD_TYPE fd() PURE;
 
   /**
    * Close the underlying socket.

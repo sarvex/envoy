@@ -9,7 +9,9 @@
 #include "common/grpc/async_client_impl.h"
 #include "common/protobuf/protobuf.h"
 
+#if !defined(DISABLE_PROTO_VALIDATE)
 #include "api/filter/accesslog/accesslog.pb.validate.h"
+#endif
 
 namespace Envoy {
 namespace Server {

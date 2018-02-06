@@ -23,9 +23,15 @@ Decoder::Decoder() : state_(State::FH_FLAG) {}
 
 bool Decoder::decode(Buffer::Instance& input, std::vector<Frame>& output) {
   uint64_t count = input.getRawSlices(nullptr, 0);
+#if !defined(WIN32)
   Buffer::RawSlice slices[count];
+#else
+  Buffer::RawSlice* slices =
+    reinterpret_cast<Buffer::RawSlice*>(_alloca(sizeof(Buffer::RawSlice) * count));
+#endif
   input.getRawSlices(slices, count);
-  for (Buffer::RawSlice& slice : slices) {
+  for (int i = 0; i < count; i++) {
+    Buffer::RawSlice& slice = slices[i];
     uint8_t* mem = reinterpret_cast<uint8_t*>(slice.mem_);
     for (uint64_t j = 0; j < slice.len_;) {
       uint8_t c = *mem;

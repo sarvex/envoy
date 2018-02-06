@@ -8,7 +8,9 @@
 #include "common/config/filter_json.h"
 #include "common/filter/auth/client_ssl.h"
 
+#if !defined(DISABLE_PROTO_VALIDATE)
 #include "api/filter/network/client_ssl_auth.pb.validate.h"
+#endif
 
 namespace Envoy {
 namespace Server {

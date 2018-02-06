@@ -10,7 +10,9 @@
 #include "common/http/filter/buffer_filter.h"
 #include "common/protobuf/utility.h"
 
+#if !defined(DISABLE_PROTO_VALIDATE)
 #include "api/filter/http/buffer.pb.validate.h"
+#endif
 
 namespace Envoy {
 namespace Server {

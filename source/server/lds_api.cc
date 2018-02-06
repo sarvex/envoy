@@ -10,7 +10,9 @@
 
 #include "server/lds_subscription.h"
 
+#if !defined(DISABLE_PROTO_VALIDATE)
 #include "api/lds.pb.validate.h"
+#endif
 
 namespace Envoy {
 namespace Server {

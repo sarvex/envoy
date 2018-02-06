@@ -7,7 +7,9 @@
 #include "test/test_common/utility.h"
 
 #include "api/bootstrap.pb.h"
+#if !defined(DISABLE_PROTO_VALIDATE)
 #include "api/bootstrap.pb.validate.h"
+#endif
 #include "gtest/gtest.h"
 
 namespace Envoy {
