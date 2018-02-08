@@ -21,13 +21,13 @@ Following are required to build boringssl. See https://boringssl.googlesource.co
     1. perl.exe
     2. ninja.exe
     3. go.exe
-    4. yasm
+    4. yasm.exe
+        save downloaded yasm binary as yasm.exe
         yasm will require msvcr100.dll. If you see an error indicating that msvcr100.dll is missing using following link to install x86 redistributables.
         https://www.microsoft.com/en-us/download/details.aspx?id=26999
     5. CMake
 #### Set the following variable
-    set CMAKE_ASM_NASM_COMPILER=name-of-yasm.exe
-    Downloaded yasm exe contains version as part of the name
+    set CMAKE_ASM_NASM_COMPILER=yasm.exe
 #### Set the following variable to the path the folder that should be used for downloading and building the dependencies.
     ENVOY_DEPENDENCIES_ROOT=_path-to-use-for-fetching-and-building-dependencies_
 #### Fetch and build dependencies by running batch script

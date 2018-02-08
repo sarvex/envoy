@@ -181,14 +181,7 @@ target_link_libraries(
 target_link_libraries(envoy 
     debug 
     absl_based.lib
-#    absl_containerd.lib
-#    absl_debuggingd.lib
-#    absl_numericd.lib
     absl_stringsd.lib
-#    absl_synchronizationd.lib
-#    absl_timed.lib
-#    absl_typesd.lib
-absl_utilityd.lib
 )
 
 target_link_libraries(envoy debug 
