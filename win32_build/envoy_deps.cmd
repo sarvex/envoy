@@ -20,11 +20,11 @@ if not exist %PROTOC_OUTPUT%\lib mkdir  %PROTOC_OUTPUT%\lib
 REM vcpkg
 if not exist vcpkg (
     git clone https://github.com/Microsoft/vcpkg.git
+)
 cd vcpkg
 call .\bootstrap-vcpkg.bat
 vcpkg install --triplet x64-windows-static abseil c-ares grpc http-parser libevent spdlog xxhash tclap rapidjson yaml-cpp
 vcpkg install --triplet x64-windows nghttp2
-)
 
 @echo on
 
