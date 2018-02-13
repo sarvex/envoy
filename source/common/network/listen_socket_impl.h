@@ -91,12 +91,21 @@ public:
   }
   bool localAddressRestored() const override { return local_address_restored_; }
   int fd() const override { return fd_; }
+#if !defined(WIN32)
   void close() override {
     if (fd_ != -1) {
       ::close(fd_);
       fd_ = -1;
     }
   }
+#else
+  void close() override {
+    if (fd_ != -1) {
+      ::closesocket(fd_);
+      fd_ = -1;
+    }
+  }
+#endif
 
 protected:
   int fd_;

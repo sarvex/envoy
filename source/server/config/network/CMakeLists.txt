@@ -10,6 +10,8 @@ add_library(config_network_mongo_proxy_lib mongo_proxy.cc)
 
 add_library(config_network_ratelimit_lib ratelimit.cc)
 
+add_library(config_network_raw_buffer_lib OBJECT raw_buffer_socket.cc)
+
 add_library(config_network_redis_proxy_lib redis_proxy.cc)
 
 add_library(config_network_tcp_proxy_lib tcp_proxy.cc)

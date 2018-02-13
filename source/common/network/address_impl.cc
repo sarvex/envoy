@@ -81,8 +81,9 @@ InstanceConstSharedPtr addressFromFd(SOCKET_FD_TYPE fd) {
   socklen_t ss_len = sizeof ss;
   int rc = ::getsockname(fd, reinterpret_cast<sockaddr*>(&ss), &ss_len);
   if (rc != 0) {
+    int errorno = get_socket_error();
     throw EnvoyException(
-        fmt::format("getsockname failed for '{}': ({}) {}", fd, errno, strerror(get_socket_error())));
+        fmt::format("getsockname failed for '{}': ({}) {}", fd, errorno, strerror(errorno)));
   }
   int socket_v6only = 0;
   if (ss.ss_family == AF_INET6) {

@@ -188,8 +188,8 @@ void ConnectionImpl::noDelay(bool enable) {
 #endif
 #if defined(WIN32)
   if (-1 == rc) {
-    auto err = get_socket_error();
-    if (err == EWOULDBLOCK || err == EINVAL) {
+    auto errorno = get_socket_error();
+    if (errorno == EWOULDBLOCK || errorno == EINVAL) {
       // Sometimes occurs when the connection is not yet fully formed. Empirically, TCP_NODELAY is
       // enabled despite this result.
       return;
@@ -496,8 +496,9 @@ ClientConnectionImpl::ClientConnectionImpl(
   if (source_address != nullptr) {
     const int rc = source_address->bind(fd());
     if (rc < 0) {
+      int errorno = get_socket_error();
       ENVOY_LOG_MISC(debug, "Bind failure. Failed to bind to {}: {}", source_address->asString(),
-                     strerror(errno));
+                     strerror(errorno));
       // Set a special error state to ensure asynchronous close to give the owner of the
       // ConnectionImpl a chance to add callbacks and detect the "disconnect"
       bind_error_ = true;
@@ -516,14 +517,15 @@ void ClientConnectionImpl::connect() {
     ASSERT(connecting_);
   } else {
     ASSERT(rc == -1);
-    if (errno == EINPROGRESS) {
+    int errorno = get_socket_error();
+    if (errorno == EINPROGRESS || errorno == EWOULDBLOCK) {
       ASSERT(connecting_);
       ENVOY_CONN_LOG(debug, "connection in progress", *this);
     } else {
       // read/write will become ready.
       immediate_connection_error_ = true;
       connecting_ = false;
-      ENVOY_CONN_LOG(debug, "immediate connection error: {}", *this, errno);
+      ENVOY_CONN_LOG(debug, "immediate connection error: {}", *this, errorno);
     }
   }
 
