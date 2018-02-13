@@ -1,4 +1,5 @@
 #include "common/network/raw_buffer_socket.h"
+#include "common/network/errormap.h"
 
 #include "common/common/assert.h"
 #include "common/common/empty_string.h"
@@ -30,8 +31,9 @@ IoResult RawBufferSocket::doRead(Buffer::Instance& buffer) {
       break;
     } else if (rc == -1) {
       // Remote error (might be no data).
-      ENVOY_CONN_LOG(trace, "read error: {}", callbacks_->connection(), errno);
-      if (errno != EAGAIN) {
+      int errorno = get_socket_error();
+      ENVOY_CONN_LOG(trace, "read error: {}", callbacks_->connection(), errorno);
+      if (errorno != EAGAIN && errorno != EWOULDBLOCK) {
         action = PostIoAction::Close;
       }
 
@@ -66,9 +68,10 @@ IoResult RawBufferSocket::doWrite(Buffer::Instance& buffer, bool end_stream) {
     int rc = buffer.write(callbacks_->fd());
     ENVOY_CONN_LOG(trace, "write returns: {}", callbacks_->connection(), rc);
     if (rc == -1) {
-      ENVOY_CONN_LOG(trace, "write error: {} ({})", callbacks_->connection(), errno,
-                     strerror(errno));
-      if (errno == EAGAIN) {
+      int errorno = get_socket_error();
+      ENVOY_CONN_LOG(trace, "write error: {} ({})", callbacks_->connection(), errorno,
+                     strerror(errorno));
+      if (errorno == EAGAIN || errorno == EWOULDBLOCK) {
         action = PostIoAction::KeepOpen;
       } else {
         action = PostIoAction::Close;

@@ -117,6 +117,7 @@ public:
     remote_address_ = remote_address;
   }
   bool localAddressRestored() const override { return local_address_restored_; }
+<<<<<<< HEAD
 
   void setDetectedTransportProtocol(absl::string_view protocol) override {
     transport_protocol_ = std::string(protocol);
@@ -127,6 +128,24 @@ public:
     server_name_ = std::string(server_name);
   }
   absl::string_view requestedServerName() const override { return server_name_; }
+=======
+  int fd() const override { return fd_; }
+#if !defined(WIN32)
+  void close() override {
+    if (fd_ != -1) {
+      ::close(fd_);
+      fd_ = -1;
+    }
+  }
+#else
+  void close() override {
+    if (fd_ != -1) {
+      ::closesocket(fd_);
+      fd_ = -1;
+    }
+  }
+#endif
+>>>>>>> 5aae90b1d... fixes for runtime issues
 
 protected:
   Address::InstanceConstSharedPtr remote_address_;

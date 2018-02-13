@@ -35,8 +35,11 @@ target_link_libraries(envoy_main_common_lib PUBLIC
 
 add_executable(envoy
     main.cc
-)
-
+    $<TARGET_OBJECTS:config_http_buffer_lib>
+    $<TARGET_OBJECTS:config_http_router_lib>
+    $<TARGET_OBJECTS:config_network_raw_buffer_lib>
+) 
+    
 target_link_libraries(
     envoy
     envoy_main_common_lib
