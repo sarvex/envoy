@@ -170,8 +170,6 @@ target_link_libraries(
 	event.lib
     event_core.lib
     event_extra.lib
-    libprotobufd.lib
-    libprotocd.lib
     nghttp2.lib
     Ws2_32.lib
     http_parser.lib
@@ -179,15 +177,27 @@ target_link_libraries(
     Rpcrt4.lib
     protoc-gen-validate.lib
     gogoproto.lib
-    )
-
-target_link_libraries(envoy 
-    debug 
-    absl_based.lib
-    absl_stringsd.lib
 )
 
-target_link_libraries(envoy debug 
+target_link_libraries(envoy
+    debug libprotobufd.lib
+    debug libprotocd.lib
+
+    optimized libprotobuf.lib
+    optimized libprotoc.lib
+)
+
+target_link_libraries(envoy 
+    debug absl_based.lib
+    debug absl_stringsd.lib
+)
+
+target_link_libraries(envoy 
+    optimized absl_base.lib
+    optimized absl_strings.lib
+)
+
+target_link_libraries(envoy 
     crypto.lib
     decrepit.lib
     ssl.lib
@@ -195,9 +205,10 @@ target_link_libraries(envoy debug
 
 target_link_libraries(envoy 
     debug libyaml-cppmdd.lib
+    optimized libyaml-cppmd.lib
 )
 
 
 target_link_libraries(envoy 
-    debug data-plane-api.lib
+    data-plane-api.lib
 )
