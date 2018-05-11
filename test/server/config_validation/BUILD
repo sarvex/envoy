@@ -45,11 +45,25 @@ envoy_cc_test(
         "//test/config_test:example_configs_test_setup.sh",
     ],
     deps = [
+        "//source/extensions/filters/http/router:config",
+        "//source/extensions/filters/network/http_connection_manager:config",
+        "//source/extensions/transport_sockets/ssl:config",
         "//source/server/config_validation:server_lib",
         "//test/integration:integration_lib",
         "//test/mocks/server:server_mocks",
         "//test/mocks/stats:stats_mocks",
         "//test/test_common:environment_lib",
         "//test/test_common:utility_lib",
+    ],
+)
+
+envoy_cc_test(
+    name = "dispatcher_test",
+    srcs = ["dispatcher_test.cc"],
+    deps = [
+        "//source/common/event:libevent_lib",
+        "//source/server/config_validation:api_lib",
+        "//test/test_common:environment_lib",
+        "//test/test_common:network_utility_lib",
     ],
 )

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "envoy/api/v2/listener/listener.pb.h"
 #include "envoy/network/filter.h"
 #include "envoy/network/listen_socket.h"
 #include "envoy/network/listener.h"
@@ -8,8 +9,6 @@
 #include "envoy/server/guarddog.h"
 
 #include "common/protobuf/protobuf.h"
-
-#include "api/lds.pb.h"
 
 namespace Envoy {
 namespace Server {
@@ -24,31 +23,33 @@ public:
   /**
    * Creates a socket.
    * @param address supplies the socket's address.
+   * @param options to be set on the created socket just before calling 'bind()'.
    * @param bind_to_port supplies whether to actually bind the socket.
-   * @return Network::ListenSocketSharedPtr an initialized and potentially bound socket.
+   * @return Network::SocketSharedPtr an initialized and potentially bound socket.
    */
-  virtual Network::ListenSocketSharedPtr
-  createListenSocket(Network::Address::InstanceConstSharedPtr address, bool bind_to_port) PURE;
+  virtual Network::SocketSharedPtr
+  createListenSocket(Network::Address::InstanceConstSharedPtr address,
+                     const Network::Socket::OptionsSharedPtr& options, bool bind_to_port) PURE;
 
   /**
    * Creates a list of filter factories.
    * @param filters supplies the proto configuration.
    * @param context supplies the factory creation context.
-   * @return std::vector<Configuration::NetworkFilterFactoryCb> the list of filter factories.
+   * @return std::vector<Network::FilterFactoryCb> the list of filter factories.
    */
-  virtual std::vector<Configuration::NetworkFilterFactoryCb>
-  createNetworkFilterFactoryList(const Protobuf::RepeatedPtrField<envoy::api::v2::Filter>& filters,
-                                 Configuration::FactoryContext& context) PURE;
+  virtual std::vector<Network::FilterFactoryCb> createNetworkFilterFactoryList(
+      const Protobuf::RepeatedPtrField<envoy::api::v2::listener::Filter>& filters,
+      Configuration::FactoryContext& context) PURE;
 
   /**
    * Creates a list of listener filter factories.
    * @param filters supplies the JSON configuration.
    * @param context supplies the factory creation context.
-   * @return std::vector<Configuration::ListenerFilterFactoryCb> the list of filter factories.
+   * @return std::vector<Network::ListenerFilterFactoryCb> the list of filter factories.
    */
-  virtual std::vector<Configuration::ListenerFilterFactoryCb> createListenerFilterFactoryList(
-      const Protobuf::RepeatedPtrField<envoy::api::v2::ListenerFilter>& filters,
-      Configuration::FactoryContext& context) PURE;
+  virtual std::vector<Network::ListenerFilterFactoryCb> createListenerFilterFactoryList(
+      const Protobuf::RepeatedPtrField<envoy::api::v2::listener::ListenerFilter>& filters,
+      Configuration::ListenerFactoryContext& context) PURE;
 
   /**
    * @return DrainManagerPtr a new drain manager.

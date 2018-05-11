@@ -17,13 +17,13 @@ namespace {
 class AsyncClientManagerImplTest : public testing::Test {
 public:
   Upstream::MockClusterManager cm_;
-  ThreadLocal::MockInstance tls_;
+  NiceMock<ThreadLocal::MockInstance> tls_;
   Stats::MockStore scope_;
 };
 
 TEST_F(AsyncClientManagerImplTest, EnvoyGrpcOk) {
   AsyncClientManagerImpl async_client_manager(cm_, tls_);
-  envoy::api::v2::GrpcService grpc_service;
+  envoy::api::v2::core::GrpcService grpc_service;
   grpc_service.mutable_envoy_grpc()->set_cluster_name("foo");
 
   Upstream::ClusterManager::ClusterInfoMap cluster_map;
@@ -33,22 +33,22 @@ TEST_F(AsyncClientManagerImplTest, EnvoyGrpcOk) {
   EXPECT_CALL(cluster, info());
   EXPECT_CALL(*cluster.info_, addedViaApi());
 
-  async_client_manager.factoryForGrpcService(grpc_service, scope_);
+  async_client_manager.factoryForGrpcService(grpc_service, scope_, false);
 }
 
 TEST_F(AsyncClientManagerImplTest, EnvoyGrpcUnknown) {
   AsyncClientManagerImpl async_client_manager(cm_, tls_);
-  envoy::api::v2::GrpcService grpc_service;
+  envoy::api::v2::core::GrpcService grpc_service;
   grpc_service.mutable_envoy_grpc()->set_cluster_name("foo");
 
   EXPECT_CALL(cm_, clusters());
-  EXPECT_THROW_WITH_MESSAGE(async_client_manager.factoryForGrpcService(grpc_service, scope_),
+  EXPECT_THROW_WITH_MESSAGE(async_client_manager.factoryForGrpcService(grpc_service, scope_, false),
                             EnvoyException, "Unknown gRPC client cluster 'foo'");
 }
 
 TEST_F(AsyncClientManagerImplTest, EnvoyGrpcDynamicCluster) {
   AsyncClientManagerImpl async_client_manager(cm_, tls_);
-  envoy::api::v2::GrpcService grpc_service;
+  envoy::api::v2::core::GrpcService grpc_service;
   grpc_service.mutable_envoy_grpc()->set_cluster_name("foo");
 
   Upstream::ClusterManager::ClusterInfoMap cluster_map;
@@ -57,17 +57,31 @@ TEST_F(AsyncClientManagerImplTest, EnvoyGrpcDynamicCluster) {
   EXPECT_CALL(cm_, clusters()).WillOnce(Return(cluster_map));
   EXPECT_CALL(cluster, info());
   EXPECT_CALL(*cluster.info_, addedViaApi()).WillOnce(Return(true));
-  EXPECT_THROW_WITH_MESSAGE(async_client_manager.factoryForGrpcService(grpc_service, scope_),
+  EXPECT_THROW_WITH_MESSAGE(async_client_manager.factoryForGrpcService(grpc_service, scope_, false),
                             EnvoyException, "gRPC client cluster 'foo' is not static");
 }
 
 TEST_F(AsyncClientManagerImplTest, GoogleGrpc) {
+  EXPECT_CALL(scope_, createScope_("grpc.foo."));
   AsyncClientManagerImpl async_client_manager(cm_, tls_);
-  envoy::api::v2::GrpcService grpc_service;
-  grpc_service.mutable_google_grpc();
+  envoy::api::v2::core::GrpcService grpc_service;
+  grpc_service.mutable_google_grpc()->set_stat_prefix("foo");
 
-  EXPECT_THROW_WITH_MESSAGE(async_client_manager.factoryForGrpcService(grpc_service, scope_),
-                            EnvoyException, "Google C++ gRPC client is not implemented yet");
+#ifdef ENVOY_GOOGLE_GRPC
+  EXPECT_NE(nullptr, async_client_manager.factoryForGrpcService(grpc_service, scope_, false));
+#else
+  EXPECT_THROW_WITH_MESSAGE(async_client_manager.factoryForGrpcService(grpc_service, scope_, false),
+                            EnvoyException, "Google C++ gRPC client is not linked");
+#endif
+}
+
+TEST_F(AsyncClientManagerImplTest, EnvoyGrpcUnknownOk) {
+  AsyncClientManagerImpl async_client_manager(cm_, tls_);
+  envoy::api::v2::core::GrpcService grpc_service;
+  grpc_service.mutable_envoy_grpc()->set_cluster_name("foo");
+
+  EXPECT_CALL(cm_, clusters()).Times(0);
+  ASSERT_NO_THROW(async_client_manager.factoryForGrpcService(grpc_service, scope_, true));
 }
 
 } // namespace

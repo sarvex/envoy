@@ -27,7 +27,7 @@ public:
   void initialize() override {
     config_helper_.addFilter(
         "{ name: envoy.rate_limit, config: { domain: some_domain, timeout: 0.5s } }");
-    config_helper_.addConfigModifier([this](envoy::api::v2::Bootstrap& bootstrap) {
+    config_helper_.addConfigModifier([this](envoy::config::bootstrap::v2::Bootstrap& bootstrap) {
       auto* ratelimit_cluster = bootstrap.mutable_static_resources()->add_clusters();
       ratelimit_cluster->MergeFrom(bootstrap.static_resources().clusters()[0]);
       ratelimit_cluster->set_name("ratelimit");
@@ -36,7 +36,8 @@ public:
                      fake_upstreams_.back()->localAddress());
     });
     config_helper_.addConfigModifier(
-        [](envoy::api::v2::filter::network::HttpConnectionManager& hcm) {
+        [](envoy::config::filter::network::http_connection_manager::v2::HttpConnectionManager&
+               hcm) {
           auto* rate_limit = hcm.mutable_route_config()
                                  ->mutable_virtual_hosts(0)
                                  ->mutable_routes(0)
@@ -53,7 +54,7 @@ public:
     Http::TestHeaderMapImpl headers{{":method", "POST"},       {":path", "/test/long/url"},
                                     {":scheme", "http"},       {":authority", "host"},
                                     {"x-lyft-user-id", "123"}, {"x-forwarded-for", "10.0.0.1"}};
-    codec_client_->makeRequestWithBody(headers, request_size_, *response_);
+    response_ = codec_client_->makeRequestWithBody(headers, request_size_);
   }
 
   void waitForRatelimitRequest() {
@@ -121,6 +122,7 @@ public:
 
   FakeHttpConnectionPtr fake_ratelimit_connection_;
   FakeStreamPtr ratelimit_request_;
+  IntegrationStreamDecoderPtr response_;
 
   const uint64_t request_size_ = 1024;
   const uint64_t response_size_ = 512;

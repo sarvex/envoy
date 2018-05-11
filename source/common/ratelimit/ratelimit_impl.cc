@@ -8,13 +8,11 @@
 #include "common/common/assert.h"
 #include "common/http/headers.h"
 
-#include "fmt/format.h"
-
 namespace Envoy {
 namespace RateLimit {
 
 GrpcClientImpl::GrpcClientImpl(Grpc::AsyncClientPtr&& async_client,
-                               const Optional<std::chrono::milliseconds>& timeout)
+                               const absl::optional<std::chrono::milliseconds>& timeout)
     : service_method_(*Protobuf::DescriptorPool::generated_pool()->FindMethodByName(
           "pb.lyft.ratelimit.RateLimitService.ShouldRateLimit")),
       async_client_(std::move(async_client)), timeout_(timeout) {}
@@ -70,24 +68,24 @@ void GrpcClientImpl::onSuccess(std::unique_ptr<pb::lyft::ratelimit::RateLimitRes
 void GrpcClientImpl::onFailure(Grpc::Status::GrpcStatus status, const std::string&,
                                Tracing::Span&) {
   ASSERT(status != Grpc::Status::GrpcStatus::Ok);
-  UNREFERENCED_PARAMETER(status);
   callbacks_->complete(LimitStatus::Error);
   callbacks_ = nullptr;
 }
 
-GrpcFactoryImpl::GrpcFactoryImpl(const envoy::api::v2::RateLimitServiceConfig& config,
+GrpcFactoryImpl::GrpcFactoryImpl(const envoy::config::ratelimit::v2::RateLimitServiceConfig& config,
                                  Grpc::AsyncClientManager& async_client_manager,
                                  Stats::Scope& scope) {
-  envoy::api::v2::GrpcService grpc_service;
+  envoy::api::v2::core::GrpcService grpc_service;
   grpc_service.MergeFrom(config.grpc_service());
   // TODO(htuch): cluster_name is deprecated, remove after 1.6.0.
-  if (config.service_specifier_case() == envoy::api::v2::RateLimitServiceConfig::kClusterName) {
+  if (config.service_specifier_case() ==
+      envoy::config::ratelimit::v2::RateLimitServiceConfig::kClusterName) {
     grpc_service.mutable_envoy_grpc()->set_cluster_name(config.cluster_name());
   }
-  async_client_factory_ = async_client_manager.factoryForGrpcService(grpc_service, scope);
+  async_client_factory_ = async_client_manager.factoryForGrpcService(grpc_service, scope, false);
 }
 
-ClientPtr GrpcFactoryImpl::create(const Optional<std::chrono::milliseconds>& timeout) {
+ClientPtr GrpcFactoryImpl::create(const absl::optional<std::chrono::milliseconds>& timeout) {
   return std::make_unique<GrpcClientImpl>(async_client_factory_->create(), timeout);
 }
 

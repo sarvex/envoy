@@ -8,17 +8,13 @@
 #include "common/network/connection_impl.h"
 #include "common/network/utility.h"
 
+#include "extensions/transport_sockets/well_known_names.h"
+
 namespace Envoy {
 namespace Server {
 
 ConnectionHandlerImpl::ConnectionHandlerImpl(spdlog::logger& logger, Event::Dispatcher& dispatcher)
-    :
-#ifndef NVLOG
-      logger_(logger),
-#endif
-      dispatcher_(dispatcher) {
-  UNREFERENCED_PARAMETER(logger);
-}
+    : logger_(logger), dispatcher_(dispatcher) {}
 
 void ConnectionHandlerImpl::addListener(Network::ListenerConfig& config) {
   ActiveListenerPtr l(new ActiveListener(*this, config));
@@ -154,6 +150,11 @@ void ConnectionHandlerImpl::ActiveSocket::continueFilterChain(bool success) {
       // prevent further redirection.
       new_listener->onAccept(std::move(socket_), false);
     } else {
+      // Set default transport protocol if none of the listener filters did it.
+      if (socket_->detectedTransportProtocol().empty()) {
+        socket_->setDetectedTransportProtocol(
+            Extensions::TransportSockets::TransportSocketNames::get().RAW_BUFFER);
+      }
       // Create a new connection on this listener.
       listener_.newConnection(std::move(socket_));
     }
@@ -184,8 +185,8 @@ void ConnectionHandlerImpl::ActiveListener::onAccept(
 }
 
 void ConnectionHandlerImpl::ActiveListener::newConnection(Network::ConnectionSocketPtr&& socket) {
-  Network::ConnectionPtr new_connection =
-      parent_.dispatcher_.createServerConnection(std::move(socket), config_.defaultSslContext());
+  Network::ConnectionPtr new_connection = parent_.dispatcher_.createServerConnection(
+      std::move(socket), config_.transportSocketFactory().createTransportSocket());
   new_connection->setBufferLimits(config_.perConnectionBufferLimitBytes());
   onNewConnection(std::move(new_connection));
 }

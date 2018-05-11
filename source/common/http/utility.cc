@@ -10,6 +10,7 @@
 #include "common/common/assert.h"
 #include "common/common/empty_string.h"
 #include "common/common/enum_to_int.h"
+#include "common/common/fmt.h"
 #include "common/common/utility.h"
 #include "common/http/exception.h"
 #include "common/http/header_map_impl.h"
@@ -18,7 +19,6 @@
 #include "common/protobuf/utility.h"
 
 #include "absl/strings/string_view.h"
-#include "fmt/format.h"
 
 namespace Envoy {
 namespace Http {
@@ -44,7 +44,7 @@ std::string Utility::createSslRedirectPath(const HeaderMap& headers) {
                      headers.Path()->value().c_str());
 }
 
-Utility::QueryParams Utility::parseQueryString(const std::string& url) {
+Utility::QueryParams Utility::parseQueryString(absl::string_view url) {
   QueryParams params;
   size_t start = url.find('?');
   if (start == std::string::npos) {
@@ -57,7 +57,7 @@ Utility::QueryParams Utility::parseQueryString(const std::string& url) {
     if (end == std::string::npos) {
       end = url.size();
     }
-    absl::string_view param(url.c_str() + start, end - start);
+    absl::string_view param(url.data() + start, end - start);
 
     const size_t equal = param.find('=');
     if (equal != std::string::npos) {
@@ -186,7 +186,8 @@ bool Utility::isWebSocketUpgradeRequest(const HeaderMap& headers) {
                     Http::Headers::get().UpgradeValues.WebSocket.c_str())));
 }
 
-Http2Settings Utility::parseHttp2Settings(const envoy::api::v2::Http2ProtocolOptions& config) {
+Http2Settings
+Utility::parseHttp2Settings(const envoy::api::v2::core::Http2ProtocolOptions& config) {
   Http2Settings ret;
   ret.hpack_table_size_ = PROTOBUF_GET_WRAPPED_OR_DEFAULT(
       config, hpack_table_size, Http::Http2Settings::DEFAULT_HPACK_TABLE_SIZE);
@@ -200,9 +201,12 @@ Http2Settings Utility::parseHttp2Settings(const envoy::api::v2::Http2ProtocolOpt
   return ret;
 }
 
-Http1Settings Utility::parseHttp1Settings(const envoy::api::v2::Http1ProtocolOptions& config) {
+Http1Settings
+Utility::parseHttp1Settings(const envoy::api::v2::core::Http1ProtocolOptions& config) {
   Http1Settings ret;
   ret.allow_absolute_url_ = PROTOBUF_GET_WRAPPED_OR_DEFAULT(config, allow_absolute_url, false);
+  ret.accept_http_10_ = config.accept_http_10();
+  ret.default_host_for_http_10_ = config.default_host_for_http_10();
   return ret;
 }
 
@@ -236,17 +240,8 @@ void Utility::sendLocalReply(
   }
 }
 
-void Utility::sendRedirect(StreamDecoderFilterCallbacks& callbacks, const std::string& new_path,
-                           Code response_code) {
-  HeaderMapPtr response_headers{
-      new HeaderMapImpl{{Headers::get().Status, std::to_string(enumToInt(response_code))},
-                        {Headers::get().Location, new_path}}};
-
-  callbacks.encodeHeaders(std::move(response_headers), true);
-}
-
 Utility::GetLastAddressFromXffInfo
-Utility::getLastAddressFromXFF(const Http::HeaderMap& request_headers) {
+Utility::getLastAddressFromXFF(const Http::HeaderMap& request_headers, uint32_t num_to_skip) {
   const auto xff_header = request_headers.ForwardedFor();
   if (xff_header == nullptr) {
     return {nullptr, false};
@@ -254,6 +249,16 @@ Utility::getLastAddressFromXFF(const Http::HeaderMap& request_headers) {
 
   absl::string_view xff_string(xff_header->value().c_str(), xff_header->value().size());
   static const std::string seperator(", ");
+  // Ignore the last num_to_skip addresses at the end of XFF.
+  for (uint32_t i = 0; i < num_to_skip; i++) {
+    std::string::size_type last_comma = xff_string.rfind(seperator);
+    if (last_comma == std::string::npos) {
+      return {nullptr, false};
+    }
+    xff_string = xff_string.substr(0, last_comma);
+  }
+  // The text after the last remaining comma, or the entirety of the string if there
+  // is no comma, is the requested IP address.
   std::string::size_type last_comma = xff_string.rfind(seperator);
   if (last_comma != std::string::npos && last_comma + seperator.size() < xff_string.size()) {
     xff_string = xff_string.substr(last_comma + seperator.size());
@@ -266,10 +271,33 @@ Utility::getLastAddressFromXFF(const Http::HeaderMap& request_headers) {
     // TODO(mattklein123 PERF: Avoid the copy here.
     return {
         Network::Utility::parseInternetAddress(std::string(xff_string.data(), xff_string.size())),
-        last_comma == std::string::npos};
+        last_comma == std::string::npos && num_to_skip == 0};
   } catch (const EnvoyException&) {
     return {nullptr, false};
   }
+}
+
+const std::string& Utility::getProtocolString(const Protocol protocol) {
+  switch (protocol) {
+  case Protocol::Http10:
+    return Headers::get().ProtocolStrings.Http10String;
+  case Protocol::Http11:
+    return Headers::get().ProtocolStrings.Http11String;
+  case Protocol::Http2:
+    return Headers::get().ProtocolStrings.Http2String;
+  }
+
+  NOT_REACHED;
+}
+
+void Utility::appendToHeader(HeaderString& header, const std::string& data) {
+  if (data.empty()) {
+    return;
+  }
+  if (!header.empty()) {
+    header.append(",", 1);
+  }
+  header.append(data.c_str(), data.size());
 }
 
 } // namespace Http

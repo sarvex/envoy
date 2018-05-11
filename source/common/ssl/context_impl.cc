@@ -9,9 +9,9 @@
 #include "envoy/runtime/runtime.h"
 
 #include "common/common/assert.h"
+#include "common/common/fmt.h"
 #include "common/common/hex.h"
 
-#include "fmt/format.h"
 #include "openssl/hmac.h"
 #include "openssl/rand.h"
 #include "openssl/x509v3.h"
@@ -66,16 +66,18 @@ ContextImpl::ContextImpl(ContextManagerImpl& parent, Stats::Scope& scope,
       throw EnvoyException(
           fmt::format("Failed to load trusted CA certificates from {}", config.caCertPath()));
     }
+
+    X509_STORE* store = SSL_CTX_get_cert_store(ctx_.get());
     for (const X509_INFO* item : list.get()) {
       if (item->x509) {
-        X509_STORE_add_cert(SSL_CTX_get_cert_store(ctx_.get()), item->x509);
+        X509_STORE_add_cert(store, item->x509);
         if (ca_cert_ == nullptr) {
           X509_up_ref(item->x509);
           ca_cert_.reset(item->x509);
         }
       }
       if (item->crl) {
-        X509_STORE_add_crl(SSL_CTX_get_cert_store(ctx_.get()), item->crl);
+        X509_STORE_add_crl(store, item->crl);
       }
     }
     if (ca_cert_ == nullptr) {
@@ -83,6 +85,30 @@ ContextImpl::ContextImpl(ContextManagerImpl& parent, Stats::Scope& scope,
           fmt::format("Failed to load trusted CA certificates from {}", config.caCertPath()));
     }
     verify_mode = SSL_VERIFY_PEER;
+  }
+
+  if (!config.certificateRevocationList().empty()) {
+    bssl::UniquePtr<BIO> bio(
+        BIO_new_mem_buf(const_cast<char*>(config.certificateRevocationList().data()),
+                        config.certificateRevocationList().size()));
+    RELEASE_ASSERT(bio != nullptr);
+
+    // Based on BoringSSL's X509_load_cert_crl_file().
+    bssl::UniquePtr<STACK_OF(X509_INFO)> list(
+        PEM_X509_INFO_read_bio(bio.get(), nullptr, nullptr, nullptr));
+    if (list == nullptr) {
+      throw EnvoyException(
+          fmt::format("Failed to load CRL from {}", config.certificateRevocationListPath()));
+    }
+
+    X509_STORE* store = SSL_CTX_get_cert_store(ctx_.get());
+    for (const X509_INFO* item : list.get()) {
+      if (item->crl) {
+        X509_STORE_add_crl(store, item->crl);
+      }
+    }
+
+    X509_STORE_set_flags(store, X509_V_FLAG_CRL_CHECK | X509_V_FLAG_CRL_CHECK_ALL);
   }
 
   if (!config.verifySubjectAltNameList().empty()) {
@@ -256,41 +282,31 @@ void ContextImpl::logHandshake(SSL* ssl) const {
 
 bool ContextImpl::verifySubjectAltName(X509* cert,
                                        const std::vector<std::string>& subject_alt_names) {
-  bool verified = false;
-
-  STACK_OF(GENERAL_NAME)* altnames = static_cast<STACK_OF(GENERAL_NAME)*>(
-      X509_get_ext_d2i(cert, NID_subject_alt_name, nullptr, nullptr));
-
-  if (altnames) {
-    int n = sk_GENERAL_NAME_num(altnames);
-    for (int i = 0; i < n && !verified; i++) {
-      GENERAL_NAME* altname = sk_GENERAL_NAME_value(altnames, i);
-
-      if (altname->type == GEN_DNS) {
-        ASN1_STRING* str = altname->d.dNSName;
-        char* dns_name = reinterpret_cast<char*>(ASN1_STRING_data(str));
-        for (auto& config_san : subject_alt_names) {
-          if (dNSNameMatch(config_san, dns_name)) {
-            verified = true;
-            break;
-          }
+  bssl::UniquePtr<GENERAL_NAMES> san_names(
+      static_cast<GENERAL_NAMES*>(X509_get_ext_d2i(cert, NID_subject_alt_name, nullptr, nullptr)));
+  if (san_names == nullptr) {
+    return false;
+  }
+  for (const GENERAL_NAME* san : san_names.get()) {
+    if (san->type == GEN_DNS) {
+      ASN1_STRING* str = san->d.dNSName;
+      const char* dns_name = reinterpret_cast<const char*>(ASN1_STRING_data(str));
+      for (auto& config_san : subject_alt_names) {
+        if (dNSNameMatch(config_san, dns_name)) {
+          return true;
         }
-      } else if (altname->type == GEN_URI) {
-        ASN1_STRING* str = altname->d.uniformResourceIdentifier;
-        char* crt_san = reinterpret_cast<char*>(ASN1_STRING_data(str));
-        for (auto& config_san : subject_alt_names) {
-          if (config_san.compare(crt_san) == 0) {
-            verified = true;
-            break;
-          }
+      }
+    } else if (san->type == GEN_URI) {
+      ASN1_STRING* str = san->d.uniformResourceIdentifier;
+      const char* uri = reinterpret_cast<const char*>(ASN1_STRING_data(str));
+      for (auto& config_san : subject_alt_names) {
+        if (config_san.compare(uri) == 0) {
+          return true;
         }
       }
     }
-
-    sk_GENERAL_NAME_pop_free(altnames, GENERAL_NAME_free);
   }
-
-  return verified;
+  return false;
 }
 
 bool ContextImpl::dNSNameMatch(const std::string& dNSName, const char* pattern) {
@@ -379,15 +395,6 @@ std::string ContextImpl::getSerialNumber(const X509* cert) {
   return "";
 }
 
-bssl::UniquePtr<X509> ContextImpl::loadCert(const std::string& cert_file) {
-  X509* cert = nullptr;
-  std::unique_ptr<FILE, decltype(&fclose)> fp(fopen(cert_file.c_str(), "r"), &fclose);
-  if (!fp.get() || !PEM_read_X509(fp.get(), &cert, nullptr, nullptr)) {
-    throw EnvoyException(fmt::format("Failed to load certificate '{}'", cert_file.c_str()));
-  }
-  return bssl::UniquePtr<X509>(cert);
-};
-
 ClientContextImpl::ClientContextImpl(ContextManagerImpl& parent, Stats::Scope& scope,
                                      const ClientContextConfig& config)
     : ContextImpl(parent, scope, config) {
@@ -395,7 +402,6 @@ ClientContextImpl::ClientContextImpl(ContextManagerImpl& parent, Stats::Scope& s
     int rc = SSL_CTX_set_alpn_protos(ctx_.get(), &parsed_alpn_protocols_[0],
                                      parsed_alpn_protocols_.size());
     RELEASE_ASSERT(rc == 0);
-    UNREFERENCED_PARAMETER(rc);
   }
 
   server_name_indication_ = config.serverNameIndication();
@@ -407,7 +413,6 @@ bssl::UniquePtr<SSL> ClientContextImpl::newSsl() const {
   if (!server_name_indication_.empty()) {
     int rc = SSL_set_tlsext_host_name(ssl_con.get(), server_name_indication_.c_str());
     RELEASE_ASSERT(rc);
-    UNREFERENCED_PARAMETER(rc);
   }
 
   return ssl_con;
@@ -420,6 +425,9 @@ ServerContextImpl::ServerContextImpl(ContextManagerImpl& parent, const std::stri
     : ContextImpl(parent, scope, config), listener_name_(listener_name),
       server_names_(server_names), skip_context_update_(skip_context_update), runtime_(runtime),
       session_ticket_keys_(config.sessionTicketKeys()) {
+  if (config.certChain().empty()) {
+    throw EnvoyException("Server TlsCertificates must have a certificate specified");
+  }
   SSL_CTX_set_select_certificate_cb(
       ctx_.get(), [](const SSL_CLIENT_HELLO* client_hello) -> ssl_select_cert_result_t {
         ContextImpl* context_impl = static_cast<ContextImpl*>(
@@ -525,10 +533,7 @@ ServerContextImpl::ServerContextImpl(ContextManagerImpl& parent, const std::stri
   bssl::UniquePtr<GENERAL_NAMES> san_names(
       static_cast<GENERAL_NAMES*>(X509_get_ext_d2i(cert, NID_subject_alt_name, nullptr, nullptr)));
   if (san_names != nullptr) {
-    // TODO(ggreenway): Use range-based for loop when newer BoringSSL build is used:
-    //   for (const GENERAL_NAME* san : *san_names) {
-    for (size_t i = 0; i < sk_GENERAL_NAME_num(san_names.get()); i++) {
-      const GENERAL_NAME* san = sk_GENERAL_NAME_value(san_names.get(), i);
+    for (const GENERAL_NAME* san : san_names.get()) {
       if (san->type == GEN_DNS || san->type == GEN_URI) {
         rc = EVP_DigestUpdate(&md, ASN1_STRING_data(san->d.ia5), ASN1_STRING_length(san->d.ia5));
         RELEASE_ASSERT(rc == 1);
@@ -646,7 +651,6 @@ void ServerContextImpl::updateConnectionContext(SSL* ssl) {
   // TODO(PiotrSikora): add getters to BoringSSL.
   rc = SSL_set1_curves_list(ssl, ecdh_curves_.c_str());
   ASSERT(rc == 1);
-  UNREFERENCED_PARAMETER(rc);
 }
 
 int ServerContextImpl::sessionTicketProcess(SSL*, uint8_t* key_name, uint8_t* iv,
@@ -669,7 +673,6 @@ int ServerContextImpl::sessionTicketProcess(SSL*, uint8_t* key_name, uint8_t* iv
 
     int rc = RAND_bytes(iv, EVP_CIPHER_iv_length(cipher));
     ASSERT(rc);
-    UNREFERENCED_PARAMETER(rc);
 
     // This RELEASE_ASSERT is logically a static_assert, but we can't actually get
     // EVP_CIPHER_key_length(cipher) at compile-time

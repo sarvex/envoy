@@ -1,16 +1,24 @@
 #include "envoy/registry/registry.h"
 #include "envoy/server/filter_config.h"
 
-#include "common/filter/listener/original_dst.h"
+#include "common/api/os_sys_calls_impl.h"
+#include "common/config/metadata.h"
 #include "common/network/address_impl.h"
 #include "common/network/listen_socket_impl.h"
+#include "common/network/socket_option_impl.h"
+#include "common/network/utility.h"
 
 #include "server/configuration_impl.h"
 #include "server/listener_manager_impl.h"
 
+#include "extensions/filters/listener/original_dst/original_dst.h"
+
+#include "test/mocks/network/mocks.h"
 #include "test/mocks/server/mocks.h"
 #include "test/server/utility.h"
 #include "test/test_common/environment.h"
+#include "test/test_common/registry.h"
+#include "test/test_common/threadsafe_singleton_injector.h"
 #include "test/test_common/utility.h"
 
 #include "gtest/gtest.h"
@@ -19,6 +27,7 @@ using testing::InSequence;
 using testing::Invoke;
 using testing::NiceMock;
 using testing::Return;
+using testing::ReturnRef;
 using testing::Throw;
 using testing::_;
 
@@ -59,9 +68,9 @@ public:
         .WillOnce(Return(raw_listener->drain_manager_));
     EXPECT_CALL(listener_factory_, createNetworkFilterFactoryList(_, _))
         .WillOnce(Invoke(
-            [raw_listener, need_init](const Protobuf::RepeatedPtrField<envoy::api::v2::Filter>&,
-                                      Configuration::FactoryContext& context)
-                -> std::vector<Configuration::NetworkFilterFactoryCb> {
+            [raw_listener, need_init](
+                const Protobuf::RepeatedPtrField<envoy::api::v2::listener::Filter>&,
+                Configuration::FactoryContext& context) -> std::vector<Network::FilterFactoryCb> {
               std::shared_ptr<ListenerHandle> notifier(raw_listener);
               raw_listener->context_ = &context;
               if (need_init) {
@@ -99,16 +108,17 @@ public:
   ListenerManagerImplWithRealFiltersTest() {
     // Use real filter loading by default.
     ON_CALL(listener_factory_, createNetworkFilterFactoryList(_, _))
-        .WillByDefault(Invoke([](const Protobuf::RepeatedPtrField<envoy::api::v2::Filter>& filters,
-                                 Configuration::FactoryContext& context)
-                                  -> std::vector<Configuration::NetworkFilterFactoryCb> {
-          return ProdListenerComponentFactory::createNetworkFilterFactoryList_(filters, context);
-        }));
+        .WillByDefault(Invoke(
+            [](const Protobuf::RepeatedPtrField<envoy::api::v2::listener::Filter>& filters,
+               Configuration::FactoryContext& context) -> std::vector<Network::FilterFactoryCb> {
+              return ProdListenerComponentFactory::createNetworkFilterFactoryList_(filters,
+                                                                                   context);
+            }));
     ON_CALL(listener_factory_, createListenerFilterFactoryList(_, _))
-        .WillByDefault(
-            Invoke([](const Protobuf::RepeatedPtrField<envoy::api::v2::ListenerFilter>& filters,
-                      Configuration::FactoryContext& context)
-                       -> std::vector<Configuration::ListenerFilterFactoryCb> {
+        .WillByDefault(Invoke(
+            [](const Protobuf::RepeatedPtrField<envoy::api::v2::listener::ListenerFilter>& filters,
+               Configuration::ListenerFactoryContext& context)
+                -> std::vector<Network::ListenerFilterFactoryCb> {
               return ProdListenerComponentFactory::createListenerFilterFactoryList_(filters,
                                                                                     context);
             }));
@@ -124,7 +134,7 @@ TEST_F(ListenerManagerImplWithRealFiltersTest, EmptyFilter) {
   )EOF";
 
   EXPECT_CALL(server_.random_, uuid());
-  EXPECT_CALL(listener_factory_, createListenSocket(_, true));
+  EXPECT_CALL(listener_factory_, createListenSocket(_, _, true));
   manager_->addOrUpdateListener(parseListenerFromJson(json), true);
   EXPECT_EQ(1U, manager_->listeners().size());
 }
@@ -137,7 +147,7 @@ TEST_F(ListenerManagerImplWithRealFiltersTest, DefaultListenerPerConnectionBuffe
   }
   )EOF";
 
-  EXPECT_CALL(listener_factory_, createListenSocket(_, true));
+  EXPECT_CALL(listener_factory_, createListenSocket(_, _, true));
   manager_->addOrUpdateListener(parseListenerFromJson(json), true);
   EXPECT_EQ(1024 * 1024U, manager_->listeners().back().get().perConnectionBufferLimitBytes());
 }
@@ -151,7 +161,7 @@ TEST_F(ListenerManagerImplWithRealFiltersTest, SetListenerPerConnectionBufferLim
   }
   )EOF";
 
-  EXPECT_CALL(listener_factory_, createListenSocket(_, true));
+  EXPECT_CALL(listener_factory_, createListenSocket(_, _, true));
   manager_->addOrUpdateListener(parseListenerFromJson(json), true);
   EXPECT_EQ(8192U, manager_->listeners().back().get().perConnectionBufferLimitBytes());
 }
@@ -173,9 +183,10 @@ TEST_F(ListenerManagerImplWithRealFiltersTest, SslContext) {
   )EOF",
                                                        Network::Address::IpVersion::v4);
 
-  EXPECT_CALL(listener_factory_, createListenSocket(_, true));
+  EXPECT_CALL(listener_factory_, createListenSocket(_, _, true));
   manager_->addOrUpdateListener(parseListenerFromJson(json), true);
-  EXPECT_NE(nullptr, manager_->listeners().back().get().defaultSslContext());
+  EXPECT_TRUE(
+      manager_->listeners().back().get().transportSocketFactory().implementsSecureTransport());
 }
 
 TEST_F(ListenerManagerImplWithRealFiltersTest, BadListenerConfig) {
@@ -229,8 +240,8 @@ TEST_F(ListenerManagerImplWithRealFiltersTest, BadFilterName) {
 class TestStatsConfigFactory : public Configuration::NamedNetworkFilterConfigFactory {
 public:
   // Configuration::NamedNetworkFilterConfigFactory
-  Configuration::NetworkFilterFactoryCb
-  createFilterFactory(const Json::Object&, Configuration::FactoryContext& context) override {
+  Network::FilterFactoryCb createFilterFactory(const Json::Object&,
+                                               Configuration::FactoryContext& context) override {
     context.scope().counter("bar").inc();
     return [](Network::FilterManager&) -> void {};
   }
@@ -255,7 +266,7 @@ TEST_F(ListenerManagerImplWithRealFiltersTest, StatsScopeTest) {
   }
   )EOF";
 
-  EXPECT_CALL(listener_factory_, createListenSocket(_, false));
+  EXPECT_CALL(listener_factory_, createListenSocket(_, _, false));
   manager_->addOrUpdateListener(parseListenerFromJson(json), true);
   manager_->listeners().front().get().listenerScope().counter("foo").inc();
 
@@ -278,7 +289,7 @@ TEST_F(ListenerManagerImplTest, ModifyOnlyDrainType) {
 
   ListenerHandle* listener_foo =
       expectListenerCreate(false, envoy::api::v2::Listener_DrainType_MODIFY_ONLY);
-  EXPECT_CALL(listener_factory_, createListenSocket(_, true));
+  EXPECT_CALL(listener_factory_, createListenSocket(_, _, true));
   EXPECT_TRUE(manager_->addOrUpdateListener(parseListenerFromV2Yaml(listener_foo_yaml), true));
   checkStats(1, 0, 0, 0, 1, 0);
 
@@ -299,7 +310,7 @@ TEST_F(ListenerManagerImplTest, AddListenerAddressNotMatching) {
   )EOF";
 
   ListenerHandle* listener_foo = expectListenerCreate(false);
-  EXPECT_CALL(listener_factory_, createListenSocket(_, true));
+  EXPECT_CALL(listener_factory_, createListenSocket(_, _, true));
   EXPECT_TRUE(manager_->addOrUpdateListener(parseListenerFromJson(listener_foo_json), true));
   checkStats(1, 0, 0, 0, 1, 0);
 
@@ -339,7 +350,7 @@ TEST_F(ListenerManagerImplTest, UpdateRemoveNotModifiableListener) {
   )EOF";
 
   ListenerHandle* listener_foo = expectListenerCreate(false);
-  EXPECT_CALL(listener_factory_, createListenSocket(_, true));
+  EXPECT_CALL(listener_factory_, createListenSocket(_, _, true));
   EXPECT_TRUE(manager_->addOrUpdateListener(parseListenerFromJson(listener_foo_json), false));
   checkStats(1, 0, 0, 0, 1, 0);
 
@@ -378,7 +389,7 @@ TEST_F(ListenerManagerImplTest, AddOrUpdateListener) {
   )EOF";
 
   ListenerHandle* listener_foo = expectListenerCreate(false);
-  EXPECT_CALL(listener_factory_, createListenSocket(_, true));
+  EXPECT_CALL(listener_factory_, createListenSocket(_, _, true));
   EXPECT_TRUE(manager_->addOrUpdateListener(parseListenerFromJson(listener_foo_json), true));
   checkStats(1, 0, 0, 0, 1, 0);
 
@@ -441,7 +452,7 @@ TEST_F(ListenerManagerImplTest, AddOrUpdateListener) {
   )EOF";
 
   ListenerHandle* listener_bar = expectListenerCreate(false);
-  EXPECT_CALL(listener_factory_, createListenSocket(_, true));
+  EXPECT_CALL(listener_factory_, createListenSocket(_, _, true));
   EXPECT_CALL(*worker_, addListener(_, _));
   EXPECT_TRUE(manager_->addOrUpdateListener(parseListenerFromJson(listener_bar_json), true));
   EXPECT_EQ(2UL, manager_->listeners().size());
@@ -458,7 +469,7 @@ TEST_F(ListenerManagerImplTest, AddOrUpdateListener) {
   )EOF";
 
   ListenerHandle* listener_baz = expectListenerCreate(true);
-  EXPECT_CALL(listener_factory_, createListenSocket(_, true));
+  EXPECT_CALL(listener_factory_, createListenSocket(_, _, true));
   EXPECT_CALL(listener_baz->target_, initialize(_));
   EXPECT_TRUE(manager_->addOrUpdateListener(parseListenerFromJson(listener_baz_json), true));
   EXPECT_EQ(2UL, manager_->listeners().size());
@@ -519,10 +530,10 @@ TEST_F(ListenerManagerImplTest, AddDrainingListener) {
 
   Network::Address::InstanceConstSharedPtr local_address(
       new Network::Address::Ipv4Instance("127.0.0.1", 1234));
-  ON_CALL(*listener_factory_.socket_, localAddress()).WillByDefault(Return(local_address));
+  ON_CALL(*listener_factory_.socket_, localAddress()).WillByDefault(ReturnRef(local_address));
 
   ListenerHandle* listener_foo = expectListenerCreate(false);
-  EXPECT_CALL(listener_factory_, createListenSocket(_, true));
+  EXPECT_CALL(listener_factory_, createListenSocket(_, _, true));
   EXPECT_CALL(*worker_, addListener(_, _));
   EXPECT_TRUE(manager_->addOrUpdateListener(parseListenerFromJson(listener_foo_json), true));
   worker_->callAddCompletion(true);
@@ -566,7 +577,7 @@ TEST_F(ListenerManagerImplTest, CantBindSocket) {
   )EOF";
 
   ListenerHandle* listener_foo = expectListenerCreate(true);
-  EXPECT_CALL(listener_factory_, createListenSocket(_, true))
+  EXPECT_CALL(listener_factory_, createListenSocket(_, _, true))
       .WillOnce(Throw(EnvoyException("can't bind")));
   EXPECT_CALL(*listener_foo, onDestroy());
   EXPECT_THROW(manager_->addOrUpdateListener(parseListenerFromJson(listener_foo_json), true),
@@ -588,7 +599,7 @@ TEST_F(ListenerManagerImplTest, ListenerDraining) {
   )EOF";
 
   ListenerHandle* listener_foo = expectListenerCreate(false);
-  EXPECT_CALL(listener_factory_, createListenSocket(_, true));
+  EXPECT_CALL(listener_factory_, createListenSocket(_, _, true));
   EXPECT_CALL(*worker_, addListener(_, _));
   EXPECT_TRUE(manager_->addOrUpdateListener(parseListenerFromJson(listener_foo_json), true));
   worker_->callAddCompletion(true);
@@ -640,7 +651,7 @@ TEST_F(ListenerManagerImplTest, RemoveListener) {
   )EOF";
 
   ListenerHandle* listener_foo = expectListenerCreate(true);
-  EXPECT_CALL(listener_factory_, createListenSocket(_, true));
+  EXPECT_CALL(listener_factory_, createListenSocket(_, _, true));
   EXPECT_CALL(listener_foo->target_, initialize(_));
   EXPECT_TRUE(manager_->addOrUpdateListener(parseListenerFromJson(listener_foo_json), true));
   EXPECT_EQ(0UL, manager_->listeners().size());
@@ -654,7 +665,7 @@ TEST_F(ListenerManagerImplTest, RemoveListener) {
 
   // Add foo again and initialize it.
   listener_foo = expectListenerCreate(true);
-  EXPECT_CALL(listener_factory_, createListenSocket(_, true));
+  EXPECT_CALL(listener_factory_, createListenSocket(_, _, true));
   EXPECT_CALL(listener_foo->target_, initialize(_));
   EXPECT_TRUE(manager_->addOrUpdateListener(parseListenerFromJson(listener_foo_json), true));
   checkStats(2, 0, 1, 1, 0, 0);
@@ -713,7 +724,7 @@ TEST_F(ListenerManagerImplTest, AddListenerFailure) {
   )EOF";
 
   ListenerHandle* listener_foo = expectListenerCreate(false);
-  EXPECT_CALL(listener_factory_, createListenSocket(_, true));
+  EXPECT_CALL(listener_factory_, createListenSocket(_, _, true));
   EXPECT_CALL(*worker_, addListener(_, _));
   EXPECT_TRUE(manager_->addOrUpdateListener(parseListenerFromJson(listener_foo_json), true));
 
@@ -762,7 +773,7 @@ TEST_F(ListenerManagerImplTest, DuplicateAddressDontBind) {
   )EOF";
 
   ListenerHandle* listener_foo = expectListenerCreate(true);
-  EXPECT_CALL(listener_factory_, createListenSocket(_, false));
+  EXPECT_CALL(listener_factory_, createListenSocket(_, _, false));
   EXPECT_CALL(listener_foo->target_, initialize(_));
   EXPECT_TRUE(manager_->addOrUpdateListener(parseListenerFromJson(listener_foo_json), true));
 
@@ -831,7 +842,7 @@ TEST_F(ListenerManagerImplWithRealFiltersTest, SniWithSingleFilterChain) {
                                                        Network::Address::IpVersion::v4);
 
   EXPECT_CALL(server_.random_, uuid());
-  EXPECT_CALL(listener_factory_, createListenSocket(_, true));
+  EXPECT_CALL(listener_factory_, createListenSocket(_, _, true));
   manager_->addOrUpdateListener(parseListenerFromV2Yaml(yaml), true);
   EXPECT_EQ(1U, manager_->listeners().size());
 }
@@ -887,7 +898,7 @@ TEST_F(ListenerManagerImplWithRealFiltersTest, SniWithTwoEqualFilterChains) {
                                                        Network::Address::IpVersion::v4);
 
   EXPECT_CALL(server_.random_, uuid());
-  EXPECT_CALL(listener_factory_, createListenSocket(_, true));
+  EXPECT_CALL(listener_factory_, createListenSocket(_, _, true));
   manager_->addOrUpdateListener(parseListenerFromV2Yaml(yaml), true);
   EXPECT_EQ(1U, manager_->listeners().size());
 }
@@ -944,7 +955,7 @@ TEST_F(ListenerManagerImplWithRealFiltersTest,
                                                        Network::Address::IpVersion::v4);
 
   EXPECT_CALL(server_.random_, uuid());
-  EXPECT_CALL(listener_factory_, createListenSocket(_, true));
+  EXPECT_CALL(listener_factory_, createListenSocket(_, _, true));
   manager_->addOrUpdateListener(parseListenerFromV2Yaml(yaml), true);
   EXPECT_EQ(1U, manager_->listeners().size());
 }
@@ -1068,7 +1079,7 @@ TEST_F(ListenerManagerImplWithRealFiltersTest, TlsCertificateInline) {
   )EOF";
 
   EXPECT_CALL(server_.random_, uuid());
-  EXPECT_CALL(listener_factory_, createListenSocket(_, true));
+  EXPECT_CALL(listener_factory_, createListenSocket(_, _, true));
   manager_->addOrUpdateListener(parseListenerFromV2Yaml(yaml), true);
   EXPECT_EQ(1U, manager_->listeners().size());
 }
@@ -1087,7 +1098,7 @@ TEST_F(ListenerManagerImplWithRealFiltersTest, TlsCertificateChainInlinePrivateK
                                                        Network::Address::IpVersion::v4);
 
   EXPECT_CALL(server_.random_, uuid());
-  EXPECT_CALL(listener_factory_, createListenSocket(_, true));
+  EXPECT_CALL(listener_factory_, createListenSocket(_, _, true));
   manager_->addOrUpdateListener(parseListenerFromV2Yaml(yaml), true);
   EXPECT_EQ(1U, manager_->listeners().size());
 }
@@ -1181,6 +1192,34 @@ TEST_F(ListenerManagerImplWithRealFiltersTest, TlsCertificateInvalidTrustedCA) {
                             EnvoyException, "Failed to load trusted CA certificates from <inline>");
 }
 
+TEST_F(ListenerManagerImplWithRealFiltersTest, Metadata) {
+  const std::string yaml = TestEnvironment::substitute(R"EOF(
+    address:
+      socket_address: { address: 127.0.0.1, port_value: 1234 }
+    metadata: { filter_metadata: { com.bar.foo: { baz: test_value } } }
+    filter_chains:
+    - filter_chain_match:
+      filters:
+      - name: envoy.http_connection_manager
+        config:
+          stat_prefix: metadata_test
+          route_config:
+            virtual_hosts:
+            - name: "some_virtual_host"
+              domains: ["some.domain"]
+              routes:
+              - match: { prefix: "/" }
+                route: { cluster: service_foo }
+  )EOF",
+                                                       Network::Address::IpVersion::v4);
+  manager_->addOrUpdateListener(parseListenerFromV2Yaml(yaml), true);
+  auto context = dynamic_cast<Configuration::FactoryContext*>(&manager_->listeners().front().get());
+  ASSERT_NE(nullptr, context);
+  EXPECT_EQ("test_value",
+            Config::Metadata::metadataValue(context->listenerMetadata(), "com.bar.foo", "baz")
+                .string_value());
+}
+
 TEST_F(ListenerManagerImplWithRealFiltersTest, OriginalDstFilter) {
   const std::string yaml = TestEnvironment::substitute(R"EOF(
     address:
@@ -1189,11 +1228,11 @@ TEST_F(ListenerManagerImplWithRealFiltersTest, OriginalDstFilter) {
     listener_filters:
     - name: "envoy.listener.original_dst"
       config: {}
-  )EOF", // "
+  )EOF",
                                                        Network::Address::IpVersion::v4);
 
   EXPECT_CALL(server_.random_, uuid());
-  EXPECT_CALL(listener_factory_, createListenSocket(_, true));
+  EXPECT_CALL(listener_factory_, createListenSocket(_, _, true));
   manager_->addOrUpdateListener(parseListenerFromV2Yaml(yaml), true);
   EXPECT_EQ(1U, manager_->listeners().size());
 
@@ -1221,41 +1260,52 @@ TEST_F(ListenerManagerImplWithRealFiltersTest, OriginalDstFilter) {
   EXPECT_TRUE(filterChainFactory.createListenerFilterChain(manager));
 }
 
-class OriginalDstTest : public Filter::Listener::OriginalDst {
+class OriginalDstTestFilter : public Extensions::ListenerFilters::OriginalDst::OriginalDstFilter {
   Network::Address::InstanceConstSharedPtr getOriginalDst(int) override {
     return Network::Address::InstanceConstSharedPtr{
         new Network::Address::Ipv4Instance("127.0.0.2", 2345)};
   }
 };
 
-namespace Configuration {
-
-class OriginalDstTestConfigFactory : public NamedListenerFilterConfigFactory {
-public:
-  // NamedListenerFilterConfigFactory
-  ListenerFilterFactoryCb createFilterFactoryFromProto(const Protobuf::Message&,
-                                                       FactoryContext&) override {
-    return [](Network::ListenerFilterManager& filter_manager) -> void {
-      filter_manager.addAcceptFilter(std::make_unique<OriginalDstTest>());
-    };
-  }
-
-  ProtobufTypes::MessagePtr createEmptyConfigProto() override {
-    return std::make_unique<Envoy::ProtobufWkt::Empty>();
-  }
-
-  std::string name() override { return "test.listener.original_dst"; }
-};
-
-/**
- * Static registration for the original dst filter. @see RegisterFactory.
- */
-static Registry::RegisterFactory<OriginalDstTestConfigFactory, NamedListenerFilterConfigFactory>
-    registered_;
-
-} // namespace Configuration
-
 TEST_F(ListenerManagerImplWithRealFiltersTest, OriginalDstTestFilter) {
+  static int fd;
+  fd = -1;
+  EXPECT_CALL(*listener_factory_.socket_, fd()).WillOnce(Return(0));
+
+  class OriginalDstTestConfigFactory : public Configuration::NamedListenerFilterConfigFactory {
+  public:
+    // NamedListenerFilterConfigFactory
+    Network::ListenerFilterFactoryCb
+    createFilterFactoryFromProto(const Protobuf::Message&,
+                                 Configuration::ListenerFactoryContext& context) override {
+      auto option = std::make_unique<Network::MockSocketOption>();
+      EXPECT_CALL(*option, setOption(_, Network::Socket::SocketState::PreBind))
+          .WillOnce(Return(true));
+      EXPECT_CALL(*option, setOption(_, Network::Socket::SocketState::PostBind))
+          .WillOnce(Invoke([](Network::Socket& socket, Network::Socket::SocketState) -> bool {
+            fd = socket.fd();
+            return true;
+          }));
+      context.addListenSocketOption(std::move(option));
+      return [](Network::ListenerFilterManager& filter_manager) -> void {
+        filter_manager.addAcceptFilter(std::make_unique<OriginalDstTestFilter>());
+      };
+    }
+
+    ProtobufTypes::MessagePtr createEmptyConfigProto() override {
+      return std::make_unique<Envoy::ProtobufWkt::Empty>();
+    }
+
+    std::string name() override { return "test.listener.original_dst"; }
+  };
+
+  /**
+   * Static registration for the original dst filter. @see RegisterFactory.
+   */
+  static Registry::RegisterFactory<OriginalDstTestConfigFactory,
+                                   Configuration::NamedListenerFilterConfigFactory>
+      registered_;
+
   const std::string yaml = TestEnvironment::substitute(R"EOF(
     address:
       socket_address: { address: 127.0.0.1, port_value: 1111 }
@@ -1263,11 +1313,11 @@ TEST_F(ListenerManagerImplWithRealFiltersTest, OriginalDstTestFilter) {
     listener_filters:
     - name: "test.listener.original_dst"
       config: {}
-  )EOF", // "
+  )EOF",
                                                        Network::Address::IpVersion::v4);
 
   EXPECT_CALL(server_.random_, uuid());
-  EXPECT_CALL(listener_factory_, createListenSocket(_, true));
+  EXPECT_CALL(listener_factory_, createListenSocket(_, _, true));
   manager_->addOrUpdateListener(parseListenerFromV2Yaml(yaml), true);
   EXPECT_EQ(1U, manager_->listeners().size());
 
@@ -1293,6 +1343,282 @@ TEST_F(ListenerManagerImplWithRealFiltersTest, OriginalDstTestFilter) {
   EXPECT_TRUE(filterChainFactory.createListenerFilterChain(manager));
   EXPECT_TRUE(socket.localAddressRestored());
   EXPECT_EQ("127.0.0.2:2345", socket.localAddress()->asString());
+  EXPECT_NE(fd, -1);
+}
+
+TEST_F(ListenerManagerImplWithRealFiltersTest, OriginalDstTestFilterOptionFail) {
+  class OriginalDstTestConfigFactory : public Configuration::NamedListenerFilterConfigFactory {
+  public:
+    // NamedListenerFilterConfigFactory
+    Network::ListenerFilterFactoryCb
+    createFilterFactoryFromProto(const Protobuf::Message&,
+                                 Configuration::ListenerFactoryContext& context) override {
+      auto option = std::make_unique<Network::MockSocketOption>();
+      EXPECT_CALL(*option, setOption(_, Network::Socket::SocketState::PreBind))
+          .WillOnce(Return(false));
+      context.addListenSocketOption(std::move(option));
+      return [](Network::ListenerFilterManager& filter_manager) -> void {
+        filter_manager.addAcceptFilter(std::make_unique<OriginalDstTestFilter>());
+      };
+    }
+
+    ProtobufTypes::MessagePtr createEmptyConfigProto() override {
+      return std::make_unique<Envoy::ProtobufWkt::Empty>();
+    }
+
+    std::string name() override { return "testfail.listener.original_dst"; }
+  };
+
+  /**
+   * Static registration for the original dst filter. @see RegisterFactory.
+   */
+  static Registry::RegisterFactory<OriginalDstTestConfigFactory,
+                                   Configuration::NamedListenerFilterConfigFactory>
+      registered_;
+
+  const std::string yaml = TestEnvironment::substitute(R"EOF(
+    name: "socketOptionFailListener"
+    address:
+      socket_address: { address: 127.0.0.1, port_value: 1111 }
+    filter_chains: {}
+    listener_filters:
+    - name: "testfail.listener.original_dst"
+      config: {}
+  )EOF",
+                                                       Network::Address::IpVersion::v4);
+
+  EXPECT_CALL(listener_factory_, createListenSocket(_, _, true));
+
+  EXPECT_THROW_WITH_MESSAGE(manager_->addOrUpdateListener(parseListenerFromV2Yaml(yaml), true),
+                            EnvoyException,
+                            "MockListenerComponentFactory: Setting socket options failed");
+  EXPECT_EQ(0U, manager_->listeners().size());
+}
+
+// Validate that when neither transparent nor freebind is not set in the
+// Listener, we see no socket option set.
+TEST_F(ListenerManagerImplWithRealFiltersTest, TransparentFreebindListenerDisabled) {
+  const std::string yaml = TestEnvironment::substitute(R"EOF(
+    name: "TestListener"
+    address:
+      socket_address: { address: 127.0.0.1, port_value: 1111 }
+    filter_chains:
+    - filters:
+  )EOF",
+                                                       Network::Address::IpVersion::v4);
+  EXPECT_CALL(listener_factory_, createListenSocket(_, _, true))
+      .WillOnce(Invoke([&](Network::Address::InstanceConstSharedPtr,
+                           const Network::Socket::OptionsSharedPtr& options,
+                           bool) -> Network::SocketSharedPtr {
+        EXPECT_EQ(options, nullptr);
+        return listener_factory_.socket_;
+      }));
+  manager_->addOrUpdateListener(parseListenerFromV2Yaml(yaml), true);
+  EXPECT_EQ(1U, manager_->listeners().size());
+}
+
+// Validate that when transparent is set in the Listener, we see the socket option
+// propagated to setsockopt(). This is as close to an end-to-end test as we have
+// for this feature, due to the complexity of creating an integration test
+// involving the network stack. We only test the IPv4 case here, as the logic
+// around IPv4/IPv6 handling is tested generically in
+// socket_option_impl_test.cc.
+TEST_F(ListenerManagerImplWithRealFiltersTest, TransparentListenerEnabled) {
+  NiceMock<Api::MockOsSysCalls> os_sys_calls;
+  TestThreadsafeSingletonInjector<Api::OsSysCallsImpl> os_calls(&os_sys_calls);
+
+  const std::string yaml = TestEnvironment::substitute(R"EOF(
+    name: TransparentListener
+    address:
+      socket_address: { address: 127.0.0.1, port_value: 1111 }
+    filter_chains:
+    - filters:
+    transparent: true
+  )EOF",
+                                                       Network::Address::IpVersion::v4);
+  if (ENVOY_SOCKET_IP_TRANSPARENT.has_value()) {
+    EXPECT_CALL(listener_factory_, createListenSocket(_, _, true))
+        .WillOnce(Invoke([this](Network::Address::InstanceConstSharedPtr,
+                                const Network::Socket::OptionsSharedPtr& options,
+                                bool) -> Network::SocketSharedPtr {
+          EXPECT_NE(options.get(), nullptr);
+          EXPECT_EQ(options->size(), 2);
+          EXPECT_TRUE(Network::Socket::applyOptions(options, *listener_factory_.socket_,
+                                                    Network::Socket::SocketState::PreBind));
+          return listener_factory_.socket_;
+        }));
+    // Expecting the socket option to bet set twice, once pre-bind, once post-bind.
+    EXPECT_CALL(os_sys_calls,
+                setsockopt_(_, ENVOY_SOCKET_IP_TRANSPARENT.value().first,
+                            ENVOY_SOCKET_IP_TRANSPARENT.value().second, _, sizeof(int)))
+        .Times(2)
+        .WillRepeatedly(Invoke([](int, int, int, const void* optval, socklen_t) -> int {
+          EXPECT_EQ(1, *static_cast<const int*>(optval));
+          return 0;
+        }));
+    manager_->addOrUpdateListener(parseListenerFromV2Yaml(yaml), true);
+    EXPECT_EQ(1U, manager_->listeners().size());
+  } else {
+    // MockListenerSocket is not a real socket, so this always fails in testing.
+    EXPECT_THROW_WITH_MESSAGE(manager_->addOrUpdateListener(parseListenerFromV2Yaml(yaml), true),
+                              EnvoyException,
+                              "MockListenerComponentFactory: Setting socket options failed");
+    EXPECT_EQ(0U, manager_->listeners().size());
+  }
+}
+
+// Validate that when freebind is set in the Listener, we see the socket option
+// propagated to setsockopt(). This is as close to an end-to-end test as we have
+// for this feature, due to the complexity of creating an integration test
+// involving the network stack. We only test the IPv4 case here, as the logic
+// around IPv4/IPv6 handling is tested generically in
+// socket_option_impl_test.cc.
+TEST_F(ListenerManagerImplWithRealFiltersTest, FreebindListenerEnabled) {
+  NiceMock<Api::MockOsSysCalls> os_sys_calls;
+  TestThreadsafeSingletonInjector<Api::OsSysCallsImpl> os_calls(&os_sys_calls);
+
+  const std::string yaml = TestEnvironment::substitute(R"EOF(
+    name: FreebindListener
+    address:
+      socket_address: { address: 127.0.0.1, port_value: 1111 }
+    filter_chains:
+    - filters:
+    freebind: true
+  )EOF",
+                                                       Network::Address::IpVersion::v4);
+  if (ENVOY_SOCKET_IP_FREEBIND.has_value()) {
+    EXPECT_CALL(listener_factory_, createListenSocket(_, _, true))
+        .WillOnce(Invoke([this](Network::Address::InstanceConstSharedPtr,
+                                const Network::Socket::OptionsSharedPtr& options,
+                                bool) -> Network::SocketSharedPtr {
+          EXPECT_NE(options.get(), nullptr);
+          EXPECT_EQ(options->size(), 1);
+          EXPECT_TRUE(Network::Socket::applyOptions(options, *listener_factory_.socket_,
+                                                    Network::Socket::SocketState::PreBind));
+          return listener_factory_.socket_;
+        }));
+    EXPECT_CALL(os_sys_calls, setsockopt_(_, ENVOY_SOCKET_IP_FREEBIND.value().first,
+                                          ENVOY_SOCKET_IP_FREEBIND.value().second, _, sizeof(int)))
+        .WillOnce(Invoke([](int, int, int, const void* optval, socklen_t) -> int {
+          EXPECT_EQ(1, *static_cast<const int*>(optval));
+          return 0;
+        }));
+    manager_->addOrUpdateListener(parseListenerFromV2Yaml(yaml), true);
+    EXPECT_EQ(1U, manager_->listeners().size());
+  } else {
+    // MockListenerSocket is not a real socket, so this always fails in testing.
+    EXPECT_THROW_WITH_MESSAGE(manager_->addOrUpdateListener(parseListenerFromV2Yaml(yaml), true),
+                              EnvoyException,
+                              "MockListenerComponentFactory: Setting socket options failed");
+    EXPECT_EQ(0U, manager_->listeners().size());
+  }
+}
+
+// Set the resolver to the default IP resolver. The address resolver logic is unit tested in
+// resolver_impl_test.cc.
+TEST_F(ListenerManagerImplWithRealFiltersTest, AddressResolver) {
+  const std::string yaml = TestEnvironment::substitute(R"EOF(
+    name: AddressResolverdListener
+    address:
+      socket_address: { address: 127.0.0.1, port_value: 1111, resolver_name: envoy.mock.resolver }
+    filter_chains:
+    - filters:
+  )EOF",
+                                                       Network::Address::IpVersion::v4);
+
+  NiceMock<Network::MockAddressResolver> mock_resolver;
+  EXPECT_CALL(mock_resolver, resolve(_))
+      .WillOnce(Return(Network::Utility::parseInternetAddress("127.0.0.1", 1111, false)));
+
+  Registry::InjectFactory<Network::Address::Resolver> register_resolver(mock_resolver);
+
+  EXPECT_CALL(listener_factory_, createListenSocket(_, _, true));
+  manager_->addOrUpdateListener(parseListenerFromV2Yaml(yaml), true);
+  EXPECT_EQ(1U, manager_->listeners().size());
+}
+
+TEST_F(ListenerManagerImplWithRealFiltersTest, CRLFilename) {
+  const std::string yaml = TestEnvironment::substitute(R"EOF(
+    address:
+      socket_address: { address: 127.0.0.1, port_value: 1234 }
+    filter_chains:
+    - tls_context:
+        common_tls_context:
+          tls_certificates:
+            - certificate_chain: { filename: "{{ test_rundir }}/test/common/ssl/test_data/san_dns_cert.pem" }
+              private_key: { filename: "{{ test_rundir }}/test/common/ssl/test_data/san_dns_key.pem" }
+          validation_context:
+            trusted_ca: { filename: "{{ test_rundir }}/test/common/ssl/test_data/ca_cert.pem" }
+            crl: { filename: "{{ test_rundir }}/test/common/ssl/test_data/ca_cert.crl" }
+  )EOF",
+                                                       Network::Address::IpVersion::v4);
+
+  EXPECT_CALL(server_.random_, uuid());
+  EXPECT_CALL(listener_factory_, createListenSocket(_, _, true));
+  manager_->addOrUpdateListener(parseListenerFromV2Yaml(yaml), true);
+  EXPECT_EQ(1U, manager_->listeners().size());
+}
+
+TEST_F(ListenerManagerImplWithRealFiltersTest, CRLInline) {
+  const std::string yaml = TestEnvironment::substitute(R"EOF(
+    address:
+      socket_address: { address: 127.0.0.1, port_value: 1234 }
+    filter_chains:
+    - tls_context:
+        common_tls_context:
+          tls_certificates:
+            - certificate_chain: { filename: "{{ test_rundir }}/test/common/ssl/test_data/san_dns_cert.pem" }
+              private_key: { filename: "{{ test_rundir }}/test/common/ssl/test_data/san_dns_key.pem" }
+          validation_context:
+            trusted_ca: { filename: "{{ test_rundir }}/test/common/ssl/test_data/ca_cert.pem" }
+            crl: { inline_string: "-----BEGIN X509 CRL-----\nMIIBbDCB1gIBATANBgkqhkiG9w0BAQsFADB2MQswCQYDVQQGEwJVUzETMBEGA1UE\nCBMKQ2FsaWZvcm5pYTEWMBQGA1UEBxMNU2FuIEZyYW5jaXNjbzENMAsGA1UEChME\nTHlmdDEZMBcGA1UECxMQTHlmdCBFbmdpbmVlcmluZzEQMA4GA1UEAxMHVGVzdCBD\nQRcNMTcxMjIwMTcxNDA4WhcNMjcxMjE4MTcxNDA4WjAcMBoCCQDZy/Qp7iAfHxcN\nMTcxMjIwMTcxMjU0WqAOMAwwCgYDVR0UBAMCAQAwDQYJKoZIhvcNAQELBQADgYEA\nOTn5Fgb44xtFd9QGtbTElZ3iwdlcOxRHjgQMd+ydzEEZRMzMgb4/NmEsgXAsxbrx\ntKmpgll8TblscitkglvGk8s4obi/OtgxNIvn+7pOBTjmrgJkcktBUDEWRbLZjsZx\nyH+5teBZ0tH0tVy914QeGitZFV8awK1hlJwlAz9g/jo=\n-----END X509 CRL-----" }
+  )EOF",
+                                                       Network::Address::IpVersion::v4);
+
+  EXPECT_CALL(server_.random_, uuid());
+  EXPECT_CALL(listener_factory_, createListenSocket(_, _, true));
+  manager_->addOrUpdateListener(parseListenerFromV2Yaml(yaml), true);
+  EXPECT_EQ(1U, manager_->listeners().size());
+}
+
+TEST_F(ListenerManagerImplWithRealFiltersTest, InvalidCRLInline) {
+  const std::string yaml = TestEnvironment::substitute(R"EOF(
+    address:
+      socket_address: { address: 127.0.0.1, port_value: 1234 }
+    filter_chains:
+    - tls_context:
+        common_tls_context:
+          tls_certificates:
+            - certificate_chain: { filename: "{{ test_rundir }}/test/common/ssl/test_data/san_dns_cert.pem" }
+              private_key: { filename: "{{ test_rundir }}/test/common/ssl/test_data/san_dns_key.pem" }
+          validation_context:
+            trusted_ca: { filename: "{{ test_rundir }}/test/common/ssl/test_data/ca_cert.pem" }
+            crl: { inline_string: "-----BEGIN X509 CRL-----\nTOTALLY_NOT_A_CRL_HERE\n-----END X509 CRL-----\n" }
+  )EOF",
+                                                       Network::Address::IpVersion::v4);
+
+  EXPECT_THROW_WITH_MESSAGE(manager_->addOrUpdateListener(parseListenerFromV2Yaml(yaml), true),
+                            EnvoyException, "Failed to load CRL from <inline>");
+}
+
+TEST_F(ListenerManagerImplWithRealFiltersTest, CRLWithNoCA) {
+  const std::string yaml = TestEnvironment::substitute(R"EOF(
+    address:
+      socket_address: { address: 127.0.0.1, port_value: 1234 }
+    filter_chains:
+    - tls_context:
+        common_tls_context:
+          tls_certificates:
+            - certificate_chain: { filename: "{{ test_rundir }}/test/common/ssl/test_data/san_dns_cert.pem" }
+              private_key: { filename: "{{ test_rundir }}/test/common/ssl/test_data/san_dns_key.pem" }
+          validation_context:
+            crl: { filename: "{{ test_rundir }}/test/common/ssl/test_data/ca_cert.crl" }
+  )EOF",
+                                                       Network::Address::IpVersion::v4);
+
+  EXPECT_THROW_WITH_REGEX(manager_->addOrUpdateListener(parseListenerFromV2Yaml(yaml), true),
+                          EnvoyException,
+                          "^Failed to load CRL from .* without trusted CA certificates$");
 }
 
 } // namespace Server

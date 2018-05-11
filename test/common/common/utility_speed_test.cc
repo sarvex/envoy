@@ -1,6 +1,8 @@
 // Note: this should be run with --compilation_mode=opt, and would benefit from a
 // quiescent system with disabled cstate power management.
 
+#include <random>
+
 #include "common/common/assert.h"
 #include "common/common/utility.h"
 
@@ -17,6 +19,29 @@ static const char CacheControl[] = "private, max-age=300, no-transform";
 static size_t CacheControlLength = sizeof(CacheControl) - 1;
 
 // NOLINT(namespace-envoy)
+
+static void BM_AccessLogDateTimeFormatter(benchmark::State& state) {
+  int outputBytes = 0;
+
+  // Generate a sequence of times for which the delta between each successive
+  // pair of times is uniformly distributed in the range (-10ms, 20ms).
+  // This is meant to simulate the situation where requests handled at
+  // approximately the same time may get logged out of order.
+  static Envoy::SystemTime time(std::chrono::seconds(1522796769));
+  static std::mt19937 prng(1); // PRNG with a fixed seed, for repeatability
+  static std::uniform_int_distribution<long> distribution(-10, 20);
+  for (auto _ : state) {
+    // TODO(brian-pane): The next line, which computes the next input timestamp,
+    // currently accounts for ~30% of the CPU time of this benchmark test. If
+    // the AccessLogDateTimeFormatter implementation is optimized further, we
+    // should precompute a sequence of input timestamps so the benchmark's own
+    // overhead won't obscure changes in the speed of the code being benchmarked.
+    time += std::chrono::milliseconds(static_cast<int>(distribution(prng)));
+    outputBytes += Envoy::AccessLogDateTimeFormatter::fromTime(time).length();
+  }
+  benchmark::DoNotOptimize(outputBytes);
+}
+BENCHMARK(BM_AccessLogDateTimeFormatter);
 
 static void BM_RTrimStringView(benchmark::State& state) {
   int accum = 0;
@@ -146,6 +171,53 @@ static void BM_FindTokenValueNoSplit(benchmark::State& state) {
   }
 }
 BENCHMARK(BM_FindTokenValueNoSplit);
+
+static void BM_IntervalSetInsert17(benchmark::State& state) {
+  for (auto _ : state) {
+    Envoy::IntervalSetImpl<size_t> interval_set;
+    interval_set.insert(7, 10);
+    interval_set.insert(-2, -1);
+    interval_set.insert(22, 23);
+    interval_set.insert(8, 15);
+    interval_set.insert(5, 12);
+    interval_set.insert(3, 3);
+    interval_set.insert(3, 4);
+    interval_set.insert(2, 4);
+    interval_set.insert(3, 6);
+    interval_set.insert(18, 19);
+    interval_set.insert(16, 17);
+    interval_set.insert(19, 20);
+    interval_set.insert(3, 6);
+    interval_set.insert(3, 20);
+    interval_set.insert(3, 22);
+    interval_set.insert(-2, 23);
+    interval_set.insert(-3, 24);
+  }
+}
+BENCHMARK(BM_IntervalSetInsert17);
+
+static void BM_IntervalSet4ToVector(benchmark::State& state) {
+  Envoy::IntervalSetImpl<size_t> interval_set;
+  interval_set.insert(7, 10);
+  interval_set.insert(-2, -1);
+  interval_set.insert(22, 23);
+  interval_set.insert(8, 15);
+  for (auto _ : state) {
+    benchmark::DoNotOptimize(interval_set.toVector());
+  }
+}
+BENCHMARK(BM_IntervalSet4ToVector);
+
+static void BM_IntervalSet50ToVector(benchmark::State& state) {
+  Envoy::IntervalSetImpl<size_t> interval_set;
+  for (size_t i = 0; i < 100; i += 2) {
+    interval_set.insert(i, i + 1);
+  }
+  for (auto _ : state) {
+    benchmark::DoNotOptimize(interval_set.toVector());
+  }
+}
+BENCHMARK(BM_IntervalSet50ToVector);
 
 // Boilerplate main(), which discovers benchmarks in the same file and runs them.
 int main(int argc, char** argv) {

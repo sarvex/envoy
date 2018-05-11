@@ -24,8 +24,31 @@ sh_test(
 )
 
 envoy_cc_test(
+    name = "main_common_test",
+    srcs = ["main_common_test.cc"],
+    data = ["//test/config/integration:google_com_proxy_port_0"],
+    deps = [
+        "//source/exe:envoy_main_common_lib",
+        "//test/test_common:environment_lib",
+    ],
+)
+
+envoy_cc_test(
     name = "signals_test",
     srcs = ["signals_test.cc"],
     tags = ["backtrace"],
-    deps = ["//source/exe:sigaction_lib"],
+    deps = [
+        "//source/exe:sigaction_lib",
+        "//test/test_common:utility_lib",
+    ],
+)
+
+envoy_cc_test(
+    name = "terminate_handler_test",
+    srcs = ["terminate_handler_test.cc"],
+    tags = ["backtrace"],
+    deps = [
+        "//source/exe:terminate_handler_lib",
+        "//test/test_common:utility_lib",
+    ],
 )

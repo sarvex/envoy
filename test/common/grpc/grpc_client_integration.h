@@ -16,7 +16,8 @@ public:
   Network::Address::IpVersion ipVersion() const { return std::get<0>(GetParam()); }
   ClientType clientType() const { return std::get<1>(GetParam()); }
 
-  void setGrpcService(envoy::api::v2::GrpcService& grpc_service, const std::string& cluster_name,
+  void setGrpcService(envoy::api::v2::core::GrpcService& grpc_service,
+                      const std::string& cluster_name,
                       Network::Address::InstanceConstSharedPtr address) {
     switch (clientType()) {
     case ClientType::EnvoyGrpc:
@@ -40,9 +41,15 @@ public:
     return;                                                                                        \
   }
 
+#ifdef ENVOY_GOOGLE_GRPC
+#define GRPC_CLIENT_INTEGRATION_PARAMS                                                             \
+  testing::Combine(testing::ValuesIn(TestEnvironment::getIpVersionsForTest()),                     \
+                   testing::Values(Grpc::ClientType::EnvoyGrpc, Grpc::ClientType::GoogleGrpc))
+#else
 #define GRPC_CLIENT_INTEGRATION_PARAMS                                                             \
   testing::Combine(testing::ValuesIn(TestEnvironment::getIpVersionsForTest()),                     \
                    testing::Values(Grpc::ClientType::EnvoyGrpc))
+#endif
 
 } // namespace Grpc
 } // namespace Envoy

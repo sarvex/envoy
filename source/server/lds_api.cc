@@ -2,6 +2,9 @@
 
 #include <unordered_map>
 
+#include "envoy/api/v2/lds.pb.validate.h"
+#include "envoy/api/v2/listener/listener.pb.validate.h"
+
 #include "common/common/cleanup.h"
 #include "common/config/resources.h"
 #include "common/config/subscription_factory.h"
@@ -10,12 +13,10 @@
 
 #include "server/lds_subscription.h"
 
-#include "api/lds.pb.validate.h"
-
 namespace Envoy {
 namespace Server {
 
-LdsApi::LdsApi(const envoy::api::v2::ConfigSource& lds_config, Upstream::ClusterManager& cm,
+LdsApi::LdsApi(const envoy::api::v2::core::ConfigSource& lds_config, Upstream::ClusterManager& cm,
                Event::Dispatcher& dispatcher, Runtime::RandomGenerator& random,
                Init::Manager& init_manager, const LocalInfo::LocalInfo& local_info,
                Stats::Scope& scope, ListenerManager& lm)
@@ -39,7 +40,7 @@ void LdsApi::initialize(std::function<void()> callback) {
   subscription_->start({}, *this);
 }
 
-void LdsApi::onConfigUpdate(const ResourceVector& resources) {
+void LdsApi::onConfigUpdate(const ResourceVector& resources, const std::string& version_info) {
   cm_.adsMux().pause(Config::TypeUrl::get().RouteConfiguration);
   Cleanup rds_resume([this] { cm_.adsMux().resume(Config::TypeUrl::get().RouteConfiguration); });
   for (const auto& listener : resources) {
@@ -55,10 +56,15 @@ void LdsApi::onConfigUpdate(const ResourceVector& resources) {
   for (const auto& listener : resources) {
     const std::string listener_name = listener.name();
     listeners_to_remove.erase(listener_name);
-    if (listener_manager_.addOrUpdateListener(listener, true)) {
-      ENVOY_LOG(info, "lds: add/update listener '{}'", listener_name);
-    } else {
-      ENVOY_LOG(debug, "lds: add/update listener '{}' skipped", listener_name);
+    try {
+      if (listener_manager_.addOrUpdateListener(listener, true)) {
+        ENVOY_LOG(info, "lds: add/update listener '{}'", listener_name);
+      } else {
+        ENVOY_LOG(debug, "lds: add/update listener '{}' skipped", listener_name);
+      }
+    } catch (const EnvoyException& e) {
+      throw EnvoyException(
+          fmt::format("Error adding/updating listener {}: {}", listener_name, e.what()));
     }
   }
 
@@ -68,6 +74,7 @@ void LdsApi::onConfigUpdate(const ResourceVector& resources) {
     }
   }
 
+  version_info_ = version_info;
   runInitializeCallbackIfAny();
 }
 

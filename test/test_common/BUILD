@@ -19,6 +19,7 @@ envoy_cc_test_library(
     name = "environment_lib",
     srcs = ["environment.cc"],
     hdrs = ["environment.h"],
+    external_deps = ["abseil_optional"],
     deps = [
         ":network_utility_lib",
         "//include/envoy/server:options_interface",
@@ -53,7 +54,6 @@ envoy_cc_library(
         ":printers_includes",
         "//source/common/buffer:buffer_lib",
         "//source/common/http:header_map_lib",
-        "//source/common/redis:codec_lib",
     ],
 )
 
@@ -70,7 +70,6 @@ envoy_cc_test_library(
     srcs = ["utility.cc"],
     hdrs = ["utility.h"],
     external_deps = [
-        "envoy_bootstrap",
         "abseil_strings",
     ],
     deps = [
@@ -85,14 +84,18 @@ envoy_cc_test_library(
         "//source/common/network:address_lib",
         "//source/common/network:utility_lib",
         "//source/common/protobuf:utility_lib",
+        "//source/common/stats:stats_lib",
+        "@envoy_api//envoy/config/bootstrap/v2:bootstrap_cc",
     ],
 )
 
 envoy_cc_test_library(
-    name = "lua_wrappers_lib",
-    hdrs = ["lua_wrappers.h"],
+    name = "logging_lib",
+    srcs = ["logging.cc"],
+    hdrs = ["logging.h"],
     deps = [
-        "//test/mocks/thread_local:thread_local_mocks",
+        "//source/common/common:assert_lib",
+        "//source/common/common:minimal_logger_lib",
     ],
 )
 
@@ -101,5 +104,15 @@ envoy_cc_library(
     hdrs = ["threadsafe_singleton_injector.h"],
     deps = [
         "//source/common/singleton:threadsafe_singleton",
+    ],
+)
+
+envoy_cc_library(
+    name = "tls_utility_lib",
+    srcs = ["tls_utility.cc"],
+    hdrs = ["tls_utility.h"],
+    external_deps = ["ssl"],
+    deps = [
+        "//source/common/common:assert_lib",
     ],
 )

@@ -7,6 +7,34 @@ exports_files([
     "sh_test_wrapper.sh",
 ])
 
+genrule(
+    name = "gnu_build_id",
+    outs = ["gnu_build_id.ldscript"],
+    cmd = """
+      echo --build-id=0x$$(
+          grep BUILD_SCM_REVISION bazel-out/volatile-status.txt \\
+        | sed 's/^BUILD_SCM_REVISION //') \\
+        > $@
+    """,
+    # Undocumented attr to depend on workspace status files.
+    # https://github.com/bazelbuild/bazel/issues/4942
+    stamp = 1,
+)
+
+# For MacOS, which doesn't have GNU ld's `--build-id` flag.
+genrule(
+    name = "raw_build_id",
+    outs = ["raw_build_id.ldscript"],
+    cmd = """
+      grep BUILD_SCM_REVISION bazel-out/volatile-status.txt \\
+    | sed 's/^BUILD_SCM_REVISION //' \\
+    > $@
+    """,
+    # Undocumented attr to depend on workspace status files.
+    # https://github.com/bazelbuild/bazel/issues/4942
+    stamp = 1,
+)
+
 config_setting(
     name = "opt_build",
     values = {"compilation_mode": "opt"},
@@ -20,6 +48,11 @@ config_setting(
 config_setting(
     name = "dbg_build",
     values = {"compilation_mode": "dbg"},
+)
+
+config_setting(
+    name = "coverage_build",
+    values = {"define": "ENVOY_CONFIG_COVERAGE=1"},
 )
 
 config_setting(
@@ -50,4 +83,14 @@ cc_proto_library(
 config_setting(
     name = "enable_exported_symbols",
     values = {"define": "exported_symbols=enabled"},
+)
+
+config_setting(
+    name = "enable_perf_annotation",
+    values = {"define": "perf_annotation=enabled"},
+)
+
+config_setting(
+    name = "force_libcpp",
+    values = {"define": "force_libcpp=enabled"},
 )

@@ -4,12 +4,11 @@
 #include <cstdint>
 #include <string>
 
+#include "envoy/api/v2/core/protocol.pb.h"
 #include "envoy/http/codes.h"
 #include "envoy/http/filter.h"
 
 #include "common/json/json_loader.h"
-
-#include "api/protocol.pb.h"
 
 namespace Envoy {
 namespace Http {
@@ -40,7 +39,7 @@ public:
    * @param url supplies the url to parse.
    * @return QueryParams the parsed parameters, if any.
    */
-  static QueryParams parseQueryString(const std::string& url);
+  static QueryParams parseQueryString(absl::string_view url);
 
   /**
    * Finds the start of the query string in a path
@@ -92,16 +91,16 @@ public:
   static bool isWebSocketUpgradeRequest(const HeaderMap& headers);
 
   /**
-   * @return Http2Settings An Http2Settings populated from the envoy::api::v2::Http2ProtocolOptions
-   *         config.
+   * @return Http2Settings An Http2Settings populated from the
+   * envoy::api::v2::core::Http2ProtocolOptions config.
    */
-  static Http2Settings parseHttp2Settings(const envoy::api::v2::Http2ProtocolOptions& config);
+  static Http2Settings parseHttp2Settings(const envoy::api::v2::core::Http2ProtocolOptions& config);
 
   /**
-   * @return Http1Settings An Http1Settings populated from the envoy::api::v2::Http1ProtocolOptions
-   *         config.
+   * @return Http1Settings An Http1Settings populated from the
+   * envoy::api::v2::core::Http1ProtocolOptions config.
    */
-  static Http1Settings parseHttp1Settings(const envoy::api::v2::Http1ProtocolOptions& config);
+  static Http1Settings parseHttp1Settings(const envoy::api::v2::core::Http1ProtocolOptions& config);
 
   /**
    * Create a locally generated response using filter callbacks.
@@ -131,15 +130,6 @@ public:
                  std::function<void(Buffer::Instance& data, bool end_stream)> encode_data,
                  const bool& is_reset, Code response_code, const std::string& body_text);
 
-  /**
-   * Send a redirect response.
-   * @param callbacks supplies the filter callbacks to use.
-   * @param new_path supplies the redirect target.
-   * @param response_code supplies the response code to use.
-   */
-  static void sendRedirect(StreamDecoderFilterCallbacks& callbacks, const std::string& new_path,
-                           Code response_code);
-
   struct GetLastAddressFromXffInfo {
     // Last valid address pulled from the XFF header.
     Network::Address::InstanceConstSharedPtr address_;
@@ -150,10 +140,28 @@ public:
   /**
    * Retrieves the last IPv4/IPv6 address in the x-forwarded-for header.
    * @param request_headers supplies the request headers.
+   * @param num_to_skip specifies the number of addresses at the end of the XFF header
+   *        to ignore when identifying the "last" address.
    * @return GetLastAddressFromXffInfo information about the last address in the XFF header.
    *         @see GetLastAddressFromXffInfo for more information.
    */
-  static GetLastAddressFromXffInfo getLastAddressFromXFF(const Http::HeaderMap& request_headers);
+  static GetLastAddressFromXffInfo getLastAddressFromXFF(const Http::HeaderMap& request_headers,
+                                                         uint32_t num_to_skip = 0);
+
+  /**
+   * Get the string for the given http protocol.
+   * @param protocol for which to return the string representation.
+   * @return string representation of the protocol.
+   */
+  static const std::string& getProtocolString(const Protocol p);
+
+  /**
+   * Appends data to header. If header already has a value, the string ',' is added between the
+   * existing value and data.
+   * @param header the header to append to.
+   * @param data to append to the header.
+   */
+  static void appendToHeader(HeaderString& header, const std::string& data);
 };
 
 } // namespace Http

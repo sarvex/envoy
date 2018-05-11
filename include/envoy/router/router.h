@@ -9,25 +9,49 @@
 #include <string>
 
 #include "envoy/access_log/access_log.h"
-#include "envoy/common/optional.h"
+#include "envoy/api/v2/core/base.pb.h"
 #include "envoy/http/codec.h"
 #include "envoy/http/codes.h"
 #include "envoy/http/header_map.h"
+#include "envoy/http/websocket.h"
 #include "envoy/tracing/http_tracer.h"
 #include "envoy/upstream/resource_manager.h"
 
 #include "common/protobuf/protobuf.h"
 #include "common/protobuf/utility.h"
 
-#include "api/base.pb.h"
+#include "absl/types/optional.h"
 
 namespace Envoy {
+
+namespace Upstream {
+class ClusterManager;
+}
+
 namespace Router {
+
+/**
+ * Functionality common among routing primitives, such as DirectResponseEntry and RouteEntry.
+ */
+class ResponseEntry {
+public:
+  virtual ~ResponseEntry() {}
+
+  /**
+   * Do potentially destructive header transforms on response headers prior to forwarding. For
+   * example, adding or removing headers. This should only be called ONCE immediately after
+   * obtaining the initial response headers.
+   * @param headers supplies the response headers, which may be modified during this call.
+   * @param request_info holds additional information about the request.
+   */
+  virtual void finalizeResponseHeaders(Http::HeaderMap& headers,
+                                       const RequestInfo::RequestInfo& request_info) const PURE;
+};
 
 /**
  * A routing primitive that specifies a direct (non-proxied) HTTP response.
  */
-class DirectResponseEntry {
+class DirectResponseEntry : public ResponseEntry {
 public:
   virtual ~DirectResponseEntry() {}
 
@@ -44,6 +68,21 @@ public:
    *         or an empty string otherwise.
    */
   virtual std::string newPath(const Http::HeaderMap& headers) const PURE;
+
+  /**
+   * Returns the response body to send with direct responses.
+   * @return std::string& the response body specified in the route configuration,
+   *         or an empty string if no response body is specified.
+   */
+  virtual const std::string& responseBody() const PURE;
+
+  /**
+   * Do potentially destructive header transforms on Path header prior to redirection. For
+   * example prefix rewriting for redirects etc. This should only be called ONCE
+   * immediately prior to redirecting.
+   * @param headers supplies the request headers, which may be modified during this call.
+   */
+  virtual void rewritePathHeader(Http::HeaderMap& headers) const PURE;
 };
 
 /**
@@ -79,9 +118,9 @@ public:
   virtual const std::string& maxAge() const PURE;
 
   /**
-   * @return const Optional<bool>& Whether access-control-allow-credentials should be true.
+   * @return const absl::optional<bool>& Whether access-control-allow-credentials should be true.
    */
-  virtual const Optional<bool>& allowCredentials() const PURE;
+  virtual const absl::optional<bool>& allowCredentials() const PURE;
 
   /**
    * @return bool Whether CORS is enabled for the route or virtual host.
@@ -154,7 +193,7 @@ public:
    *         called. Calling code should proceed with error handling.
    */
   virtual RetryStatus shouldRetry(const Http::HeaderMap* response_headers,
-                                  const Optional<Http::StreamResetReason>& reset_reason,
+                                  const absl::optional<Http::StreamResetReason>& reset_reason,
                                   DoRetryCallback callback) PURE;
 };
 
@@ -197,6 +236,18 @@ public:
 };
 
 class RateLimitPolicy;
+class Config;
+
+/**
+ * All route specific config returned by the method at
+ *   NamedHttpFilterConfigFactory::createRouteSpecificFilterConfig
+ * should be derived from this class.
+ */
+class RouteSpecificFilterConfig {
+public:
+  virtual ~RouteSpecificFilterConfig() {}
+};
+typedef std::shared_ptr<const RouteSpecificFilterConfig> RouteSpecificFilterConfigConstSharedPtr;
 
 /**
  * Virtual host defintion.
@@ -219,6 +270,26 @@ public:
    * @return const RateLimitPolicy& the rate limit policy for the virtual host.
    */
   virtual const RateLimitPolicy& rateLimitPolicy() const PURE;
+
+  /**
+   * @return const Config& the RouteConfiguration that owns this virtual host.
+   */
+  virtual const Config& routeConfig() const PURE;
+
+  /**
+   * @return const RouteSpecificFilterConfig* the per-filter config pre-processed object for
+   *  the given filter name. If there is not per-filter config, or the filter factory returns
+   *  nullptr, nullptr is returned.
+   */
+  virtual const RouteSpecificFilterConfig* perFilterConfig(const std::string& name) const PURE;
+
+  /**
+   * This is a helper on top of perFilterConfig() that casts the return object to the specified
+   * type.
+   */
+  template <class Derived> const Derived* perFilterConfigTyped(const std::string& name) const {
+    return dynamic_cast<const Derived*>(perFilterConfig(name));
+  }
 };
 
 /**
@@ -244,12 +315,12 @@ public:
    * @param headers stores the HTTP headers for the stream
    * @param add_cookie is called to add a set-cookie header on the reply sent to the downstream
    * host
-   * @return Optional<uint64_t> an optional hash value to route on. A hash value might not be
+   * @return absl::optional<uint64_t> an optional hash value to route on. A hash value might not be
    * returned if for example the specified HTTP header does not exist.
    */
-  virtual Optional<uint64_t> generateHash(const std::string& downstream_address,
-                                          const Http::HeaderMap& headers,
-                                          AddCookieCallback add_cookie) const PURE;
+  virtual absl::optional<uint64_t> generateHash(const std::string& downstream_address,
+                                                const Http::HeaderMap& headers,
+                                                AddCookieCallback add_cookie) const PURE;
 };
 
 class MetadataMatchCriterion {
@@ -269,6 +340,9 @@ public:
 
 typedef std::shared_ptr<const MetadataMatchCriterion> MetadataMatchCriterionConstSharedPtr;
 
+class MetadataMatchCriteria;
+typedef std::unique_ptr<const MetadataMatchCriteria> MetadataMatchCriteriaConstPtr;
+
 class MetadataMatchCriteria {
 public:
   virtual ~MetadataMatchCriteria() {}
@@ -280,12 +354,51 @@ public:
    */
   virtual const std::vector<MetadataMatchCriterionConstSharedPtr>&
   metadataMatchCriteria() const PURE;
+
+  /**
+   * Creates a new MetadataMatchCriteria, merging existing
+   * metadata criteria with the provided criteria. The result criteria is the
+   * combination of both sets of criteria, with those from the metadata_matches
+   * ProtobufWkt::Struct taking precedence.
+   * @param metadata_matches supplies the new criteria.
+   * @return MetadataMatchCriteriaConstPtr the result criteria.
+   */
+  virtual MetadataMatchCriteriaConstPtr
+  mergeMatchCriteria(const ProtobufWkt::Struct& metadata_matches) const PURE;
+};
+
+/**
+ * Type of path matching that a route entry uses.
+ */
+enum class PathMatchType {
+  None,
+  Prefix,
+  Exact,
+  Regex,
+};
+
+/**
+ * Criterion that a route entry uses for matching a particular path.
+ */
+class PathMatchCriterion {
+public:
+  virtual ~PathMatchCriterion() {}
+
+  /**
+   * @return PathMatchType type of path match.
+   */
+  virtual PathMatchType matchType() const PURE;
+
+  /**
+   * @return const std::string& the string with which to compare paths.
+   */
+  virtual const std::string& matcher() const PURE;
 };
 
 /**
  * An individual resolved route entry.
  */
-class RouteEntry {
+class RouteEntry : public ResponseEntry {
 public:
   virtual ~RouteEntry() {}
 
@@ -314,16 +427,6 @@ public:
    */
   virtual void finalizeRequestHeaders(Http::HeaderMap& headers,
                                       const RequestInfo::RequestInfo& request_info) const PURE;
-
-  /**
-   * Do potentially destructive header transforms on response headers prior to forwarding. For
-   * adding or removing headers. This should only be called ONCE immediately after receiving an
-   * upstream's headers.
-   * @param headers supplies the response headers, which may be modified during this call.
-   * @param request_info holds additional information about the request.
-   */
-  virtual void finalizeResponseHeaders(Http::HeaderMap& headers,
-                                       const RequestInfo::RequestInfo& request_info) const PURE;
 
   /**
    * @return const HashPolicy* the optional hash policy for the route.
@@ -380,6 +483,19 @@ public:
   virtual bool useWebSocket() const PURE;
 
   /**
+   * Create an instance of a WebSocketProxy, using the configuration in this route.
+   *
+   * This may only be called if useWebSocket() returns true on this RouteEntry.
+   *
+   * @return WebSocketProxyPtr An instance of a WebSocketProxy with the configuration specified
+   *         in this route.
+   */
+  virtual Http::WebSocketProxyPtr createWebSocketProxy(
+      Http::HeaderMap& request_headers, const RequestInfo::RequestInfo& request_info,
+      Http::WebSocketProxyCallbacks& callbacks, Upstream::ClusterManager& cluster_manager,
+      Network::ReadFilterCallbacks* read_callbacks) const PURE;
+
+  /**
    * @return MetadataMatchCriteria* the metadata that a subset load balancer should match when
    * selecting an upstream host
    */
@@ -397,10 +513,30 @@ public:
   virtual bool includeVirtualHostRateLimits() const PURE;
 
   /**
-   * @return const envoy::api::v2::Metadata& return the metadata provided in the config for this
-   * route.
+   * @return const envoy::api::v2::core::Metadata& return the metadata provided in the config for
+   * this route.
    */
-  virtual const envoy::api::v2::Metadata& metadata() const PURE;
+  virtual const envoy::api::v2::core::Metadata& metadata() const PURE;
+
+  /**
+   * @return const PathMatchCriterion& the match criterion for this route.
+   */
+  virtual const PathMatchCriterion& pathMatchCriterion() const PURE;
+
+  /**
+   * @return const RouteSpecificFilterConfig* the per-filter config pre-processed object for
+   *  the given filter name. If there is not per-filter config, or the filter factory returns
+   *  nullptr, nullptr is returned.
+   */
+  virtual const RouteSpecificFilterConfig* perFilterConfig(const std::string& name) const PURE;
+
+  /**
+   * This is a helper on top of perFilterConfig() that casts the return object to the specified
+   * type.
+   */
+  template <class Derived> const Derived* perFilterConfigTyped(const std::string& name) const {
+    return dynamic_cast<const Derived*>(perFilterConfig(name));
+  }
 };
 
 /**
@@ -446,6 +582,21 @@ public:
    * @return the decorator or nullptr if not defined for the request.
    */
   virtual const Decorator* decorator() const PURE;
+
+  /**
+   * @return const RouteSpecificFilterConfig* the per-filter config pre-processed object for
+   *  the given filter name. If there is not per-filter config, or the filter factory returns
+   *  nullptr, nullptr is returned.
+   */
+  virtual const RouteSpecificFilterConfig* perFilterConfig(const std::string& name) const PURE;
+
+  /**
+   * This is a helper on top of perFilterConfig() that casts the return object to the specified
+   * type.
+   */
+  template <class Derived> const Derived* perFilterConfigTyped(const std::string& name) const {
+    return dynamic_cast<const Derived*>(perFilterConfig(name));
+  }
 };
 
 typedef std::shared_ptr<const Route> RouteConstSharedPtr;
@@ -473,6 +624,11 @@ public:
    * (RFC1918) source.
    */
   virtual const std::list<Http::LowerCaseString>& internalOnlyHeaders() const PURE;
+
+  /**
+   * @return const std::string the RouteConfiguration name.
+   */
+  virtual const std::string& name() const PURE;
 };
 
 typedef std::shared_ptr<const Config> ConfigConstSharedPtr;

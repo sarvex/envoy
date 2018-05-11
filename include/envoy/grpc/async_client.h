@@ -2,13 +2,14 @@
 
 #include <chrono>
 
-#include "envoy/common/optional.h"
 #include "envoy/common/pure.h"
 #include "envoy/grpc/status.h"
 #include "envoy/http/header_map.h"
 #include "envoy/tracing/http_tracer.h"
 
 #include "common/protobuf/protobuf.h"
+
+#include "absl/types/optional.h"
 
 namespace Envoy {
 namespace Grpc {
@@ -129,7 +130,8 @@ public:
   virtual void onCreateInitialMetadata(Http::HeaderMap& metadata) PURE;
 
   /**
-   * Called when initial metadata is recevied.
+   * Called when initial metadata is received. This will be called with empty metadata on a
+   * trailers-only response, followed by onReceiveTrailingMetadata() with the trailing metadata.
    * @param metadata initial metadata reference.
    */
   virtual void onReceiveInitialMetadata(Http::HeaderMapPtr&& metadata) PURE;
@@ -141,7 +143,8 @@ public:
   virtual void onReceiveMessageUntyped(ProtobufTypes::MessagePtr&& message) PURE;
 
   /**
-   * Called when trailing metadata is recevied.
+   * Called when trailing metadata is recevied. This will also be called on non-Ok grpc-status
+   * stream termination.
    * @param metadata trailing metadata reference.
    */
   virtual void onReceiveTrailingMetadata(Http::HeaderMapPtr&& metadata) PURE;
@@ -149,8 +152,7 @@ public:
   /**
    * Called when the remote closes or an error occurs on the gRPC stream. The stream is
    * considered remotely closed after this invocation and no further callbacks will be
-   * invoked. A non-Ok status implies that stream is also locally closed and that no
-   * further stream operations are permitted.
+   * invoked. In addition, no further stream operations are permitted.
    * @param status the gRPC status.
    * @param message the gRPC status message or empty string if not present.
    */
@@ -193,7 +195,7 @@ public:
   virtual AsyncRequest* send(const Protobuf::MethodDescriptor& service_method,
                              const Protobuf::Message& request, AsyncRequestCallbacks& callbacks,
                              Tracing::Span& parent_span,
-                             const Optional<std::chrono::milliseconds>& timeout) PURE;
+                             const absl::optional<std::chrono::milliseconds>& timeout) PURE;
 
   /**
    * Start a gRPC stream asynchronously.

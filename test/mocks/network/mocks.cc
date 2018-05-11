@@ -89,7 +89,7 @@ template <class T> static void initializeMockConnection(T& connection) {
   ON_CALL(connection, state()).WillByDefault(ReturnPointee(&connection.state_));
 
   // The real implementation will move the buffer data into the socket.
-  ON_CALL(connection, write(_)).WillByDefault(Invoke([](Buffer::Instance& buffer) -> void {
+  ON_CALL(connection, write(_, _)).WillByDefault(Invoke([](Buffer::Instance& buffer, bool) -> void {
     buffer.drain(buffer.length());
   }));
 }
@@ -117,6 +117,12 @@ MockDnsResolver::MockDnsResolver() {
 
 MockDnsResolver::~MockDnsResolver() {}
 
+MockAddressResolver::MockAddressResolver() {
+  ON_CALL(*this, name()).WillByDefault(Return("envoy.mock.resolver"));
+}
+
+MockAddressResolver::~MockAddressResolver() {}
+
 MockReadFilterCallbacks::MockReadFilterCallbacks() {
   ON_CALL(*this, connection()).WillByDefault(ReturnRef(connection_));
   ON_CALL(*this, upstreamHost()).WillByDefault(ReturnPointee(&host_));
@@ -126,7 +132,7 @@ MockReadFilterCallbacks::MockReadFilterCallbacks() {
 MockReadFilterCallbacks::~MockReadFilterCallbacks() {}
 
 MockReadFilter::MockReadFilter() {
-  ON_CALL(*this, onData(_)).WillByDefault(Return(FilterStatus::StopIteration));
+  ON_CALL(*this, onData(_, _)).WillByDefault(Return(FilterStatus::StopIteration));
   EXPECT_CALL(*this, initializeReadFilterCallbacks(_))
       .WillOnce(
           Invoke([this](ReadFilterCallbacks& callbacks) -> void { callbacks_ = &callbacks; }));
@@ -166,10 +172,18 @@ MockFilterChainFactory::MockFilterChainFactory() {
 MockFilterChainFactory::~MockFilterChainFactory() {}
 
 MockListenSocket::MockListenSocket() : local_address_(new Address::Ipv4Instance(80)) {
-  ON_CALL(*this, localAddress()).WillByDefault(Return(local_address_));
+  ON_CALL(*this, localAddress()).WillByDefault(ReturnRef(local_address_));
+  ON_CALL(*this, options()).WillByDefault(ReturnRef(options_));
+  ON_CALL(*this, fd()).WillByDefault(Return(-1));
 }
 
 MockListenSocket::~MockListenSocket() {}
+
+MockSocketOption::MockSocketOption() {
+  ON_CALL(*this, setOption(_, _)).WillByDefault(Return(true));
+}
+
+MockSocketOption::~MockSocketOption() {}
 
 MockConnectionSocket::MockConnectionSocket() : local_address_(new Address::Ipv4Instance(80)) {
   ON_CALL(*this, localAddress()).WillByDefault(ReturnRef(local_address_));

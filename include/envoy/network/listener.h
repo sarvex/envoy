@@ -7,6 +7,7 @@
 #include "envoy/common/exception.h"
 #include "envoy/network/connection.h"
 #include "envoy/network/listen_socket.h"
+#include "envoy/network/transport_socket.h"
 #include "envoy/ssl/context.h"
 
 namespace Envoy {
@@ -26,15 +27,15 @@ public:
   virtual FilterChainFactory& filterChainFactory() PURE;
 
   /**
-   * @return ListenSocket& the actual listen socket. The address of this socket may be
+   * @return Socket& the actual listen socket. The address of this socket may be
    *         different from configured if for example the configured address binds to port zero.
    */
-  virtual ListenSocket& socket() PURE;
+  virtual Socket& socket() PURE;
 
   /**
-   * @return Ssl::ServerContext* the default SSL context.
+   * @return TransportSocketFactory& the transport socket factory.
    */
-  virtual Ssl::ServerContext* defaultSslContext() PURE;
+  virtual TransportSocketFactory& transportSocketFactory() PURE;
 
   /**
    * @return bool specifies whether the listener should actually listen on the port.

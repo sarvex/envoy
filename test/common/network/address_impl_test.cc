@@ -5,10 +5,12 @@
 #include <sys/un.h>
 #include <unistd.h>
 
+#include <memory>
 #include <string>
 
 #include "envoy/common/exception.h"
 
+#include "common/common/fmt.h"
 #include "common/common/utility.h"
 #include "common/network/address_impl.h"
 #include "common/network/utility.h"
@@ -17,7 +19,6 @@
 #include "test/test_common/network_utility.h"
 #include "test/test_common/utility.h"
 
-#include "fmt/format.h"
 #include "gtest/gtest.h"
 
 namespace Envoy {
@@ -104,7 +105,8 @@ void testSocketBindAndConnect(Network::Address::IpVersion ip_version, bool v6onl
 
 class AddressImplSocketTest : public testing::TestWithParam<IpVersion> {};
 INSTANTIATE_TEST_CASE_P(IpVersions, AddressImplSocketTest,
-                        testing::ValuesIn(TestEnvironment::getIpVersionsForTest()));
+                        testing::ValuesIn(TestEnvironment::getIpVersionsForTest()),
+                        TestUtility::ipTestParamsToString);
 
 TEST_P(AddressImplSocketTest, SocketBindAndConnect) {
   // Test listening on and connecting to an unused port with an IP loopback address.
@@ -125,6 +127,7 @@ TEST(Ipv4InstanceTest, SocketAddress) {
 
   Ipv4Instance address(&addr4);
   EXPECT_EQ("1.2.3.4:6502", address.asString());
+  EXPECT_EQ("1.2.3.4:6502", address.logicalName());
   EXPECT_EQ(Type::Ip, address.type());
   EXPECT_EQ("1.2.3.4", address.ip()->addressAsString());
   EXPECT_EQ(6502U, address.ip()->port());
@@ -287,6 +290,40 @@ TEST(PipeInstanceTest, Basic) {
   EXPECT_EQ(nullptr, address.ip());
 }
 
+TEST(PipeInstanceTest, AbstractNamespace) {
+#if defined(__linux__)
+  PipeInstance address("@/foo");
+  EXPECT_EQ("@/foo", address.asString());
+  EXPECT_EQ(Type::Pipe, address.type());
+  EXPECT_EQ(nullptr, address.ip());
+#else
+  EXPECT_THROW(PipeInstance address("@/foo"), EnvoyException);
+#endif
+}
+
+TEST(PipeInstanceTest, BadAddress) {
+  std::string long_address(1000, 'X');
+  EXPECT_THROW_WITH_REGEX(PipeInstance address(long_address), EnvoyException,
+                          "exceeds maximum UNIX domain socket path size");
+}
+
+TEST(PipeInstanceTest, UnlinksExistingFile) {
+  const auto bind_uds_socket = [](const std::string& path) {
+    PipeInstance address(path);
+    const int listen_fd = address.socket(SocketType::Stream);
+    ASSERT_GE(listen_fd, 0) << address.asString();
+    ScopedFdCloser closer(listen_fd);
+
+    const int rc = address.bind(listen_fd);
+    const int err = errno;
+    ASSERT_EQ(rc, 0) << address.asString() << "\nerror: " << strerror(err) << "\nerrno: " << err;
+  };
+
+  const std::string path = TestEnvironment::unixDomainSocketPath("UnlinksExistingFile.sock");
+  bind_uds_socket(path);
+  bind_uds_socket(path); // after closing, second bind to the same path should succeed.
+}
+
 TEST(AddressFromSockAddr, IPv4) {
   sockaddr_storage ss;
   auto& sin = reinterpret_cast<sockaddr_in&>(ss);
@@ -295,9 +332,9 @@ TEST(AddressFromSockAddr, IPv4) {
   EXPECT_EQ(1, inet_pton(AF_INET, "1.2.3.4", &sin.sin_addr));
   sin.sin_port = htons(6502);
 
-  EXPECT_DEATH(addressFromSockAddr(ss, 1), "ss_len");
-  EXPECT_DEATH(addressFromSockAddr(ss, sizeof(sockaddr_in) - 1), "ss_len");
-  EXPECT_DEATH(addressFromSockAddr(ss, sizeof(sockaddr_in) + 1), "ss_len");
+  EXPECT_DEATH_LOG_TO_STDERR(addressFromSockAddr(ss, 1), "ss_len");
+  EXPECT_DEATH_LOG_TO_STDERR(addressFromSockAddr(ss, sizeof(sockaddr_in) - 1), "ss_len");
+  EXPECT_DEATH_LOG_TO_STDERR(addressFromSockAddr(ss, sizeof(sockaddr_in) + 1), "ss_len");
 
   EXPECT_EQ("1.2.3.4:6502", addressFromSockAddr(ss, sizeof(sockaddr_in))->asString());
 
@@ -314,9 +351,9 @@ TEST(AddressFromSockAddr, IPv6) {
   EXPECT_EQ(1, inet_pton(AF_INET6, "01:023::00Ef", &sin6.sin6_addr));
   sin6.sin6_port = htons(32000);
 
-  EXPECT_DEATH(addressFromSockAddr(ss, 1), "ss_len");
-  EXPECT_DEATH(addressFromSockAddr(ss, sizeof(sockaddr_in6) - 1), "ss_len");
-  EXPECT_DEATH(addressFromSockAddr(ss, sizeof(sockaddr_in6) + 1), "ss_len");
+  EXPECT_DEATH_LOG_TO_STDERR(addressFromSockAddr(ss, 1), "ss_len");
+  EXPECT_DEATH_LOG_TO_STDERR(addressFromSockAddr(ss, sizeof(sockaddr_in6) - 1), "ss_len");
+  EXPECT_DEATH_LOG_TO_STDERR(addressFromSockAddr(ss, sizeof(sockaddr_in6) + 1), "ss_len");
 
   EXPECT_EQ("[1:23::ef]:32000", addressFromSockAddr(ss, sizeof(sockaddr_in6))->asString());
 
@@ -337,17 +374,22 @@ TEST(AddressFromSockAddr, Pipe) {
 
   StringUtil::strlcpy(sun.sun_path, "/some/path", sizeof sun.sun_path);
 
-  EXPECT_DEATH(addressFromSockAddr(ss, 1), "ss_len");
-  EXPECT_DEATH(addressFromSockAddr(ss, offsetof(struct sockaddr_un, sun_path)), "ss_len");
+  EXPECT_DEATH_LOG_TO_STDERR(addressFromSockAddr(ss, 1), "ss_len");
+  EXPECT_DEATH_LOG_TO_STDERR(addressFromSockAddr(ss, offsetof(struct sockaddr_un, sun_path)),
+                             "ss_len");
 
   socklen_t ss_len = offsetof(struct sockaddr_un, sun_path) + 1 + strlen(sun.sun_path);
   EXPECT_EQ("/some/path", addressFromSockAddr(ss, ss_len)->asString());
 
-  // Empty path (== start of Abstract socket name) is invalid.
-  StringUtil::strlcpy(sun.sun_path, "", sizeof sun.sun_path);
-  EXPECT_THROW(
-      addressFromSockAddr(ss, offsetof(struct sockaddr_un, sun_path) + 1 + strlen(sun.sun_path)),
-      EnvoyException);
+  // Abstract socket namespace.
+  StringUtil::strlcpy(&sun.sun_path[1], "/some/abstract/path", sizeof sun.sun_path);
+  sun.sun_path[0] = '\0';
+  ss_len = offsetof(struct sockaddr_un, sun_path) + 1 + strlen("/some/abstract/path");
+#if defined(__linux__)
+  EXPECT_EQ("@/some/abstract/path", addressFromSockAddr(ss, ss_len)->asString());
+#else
+  EXPECT_THROW(addressFromSockAddr(ss, ss_len), EnvoyException);
+#endif
 }
 
 } // namespace Address

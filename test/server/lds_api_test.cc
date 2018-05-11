@@ -1,3 +1,5 @@
+#include "envoy/api/v2/lds.pb.h"
+
 #include "common/config/utility.h"
 #include "common/http/message_impl.h"
 
@@ -12,6 +14,7 @@
 using testing::InSequence;
 using testing::Invoke;
 using testing::Return;
+using testing::Throw;
 using testing::_;
 
 namespace Envoy {
@@ -31,10 +34,11 @@ public:
     )EOF";
 
     Json::ObjectSharedPtr config = Json::Factory::loadFromString(config_json);
-    envoy::api::v2::ConfigSource lds_config;
+    envoy::api::v2::core::ConfigSource lds_config;
     Config::Utility::translateLdsConfig(*config, lds_config);
     if (v2_rest) {
-      lds_config.mutable_api_config_source()->set_api_type(envoy::api::v2::ApiConfigSource::REST);
+      lds_config.mutable_api_config_source()->set_api_type(
+          envoy::api::v2::core::ApiConfigSource::REST);
     }
     Upstream::ClusterManager::ClusterInfoMap cluster_map;
     Upstream::MockCluster cluster;
@@ -65,9 +69,9 @@ public:
   void expectRequest() {
     EXPECT_CALL(cluster_manager_, httpAsyncClientForCluster("foo_cluster"));
     EXPECT_CALL(cluster_manager_.async_client_, send_(_, _, _))
-        .WillOnce(
-            Invoke([&](Http::MessagePtr& request, Http::AsyncClient::Callbacks& callbacks,
-                       const Optional<std::chrono::milliseconds>&) -> Http::AsyncClient::Request* {
+        .WillOnce(Invoke(
+            [&](Http::MessagePtr& request, Http::AsyncClient::Callbacks& callbacks,
+                const absl::optional<std::chrono::milliseconds>&) -> Http::AsyncClient::Request* {
               EXPECT_EQ((Http::TestHeaderMapImpl{
                             {":method", v2_rest_ ? "POST" : "GET"},
                             {":path", v2_rest_ ? "/v2/discovery:listeners"
@@ -116,7 +120,7 @@ TEST_F(LdsApiTest, ValidateFail) {
   Protobuf::RepeatedPtrField<envoy::api::v2::Listener> listeners;
   listeners.Add();
 
-  EXPECT_THROW(lds_->onConfigUpdate(listeners), ProtoValidationException);
+  EXPECT_THROW(lds_->onConfigUpdate(listeners, ""), ProtoValidationException);
   EXPECT_CALL(request_, cancel());
 }
 
@@ -129,16 +133,43 @@ TEST_F(LdsApiTest, UnknownCluster) {
   )EOF";
 
   Json::ObjectSharedPtr config = Json::Factory::loadFromString(config_json);
-  envoy::api::v2::ConfigSource lds_config;
+  envoy::api::v2::core::ConfigSource lds_config;
   Config::Utility::translateLdsConfig(*config, lds_config);
   Upstream::ClusterManager::ClusterInfoMap cluster_map;
   EXPECT_CALL(cluster_manager_, clusters()).WillOnce(Return(cluster_map));
-  EXPECT_THROW_WITH_MESSAGE(LdsApi(lds_config, cluster_manager_, dispatcher_, random_, init_,
-                                   local_info_, store_, listener_manager_),
-                            EnvoyException,
-                            "envoy::api::v2::ConfigSource must have a statically defined non-EDS "
-                            "cluster: 'foo_cluster' does not exist, was added via api, or is an "
-                            "EDS cluster");
+  EXPECT_THROW_WITH_MESSAGE(
+      LdsApi(lds_config, cluster_manager_, dispatcher_, random_, init_, local_info_, store_,
+             listener_manager_),
+      EnvoyException,
+      "envoy::api::v2::core::ConfigSource must have a statically defined non-EDS "
+      "cluster: 'foo_cluster' does not exist, was added via api, or is an "
+      "EDS cluster");
+}
+
+TEST_F(LdsApiTest, MisconfiguredListenerNameIsPresentInException) {
+  InSequence s;
+
+  setup(true);
+
+  Protobuf::RepeatedPtrField<envoy::api::v2::Listener> listeners;
+  std::vector<std::reference_wrapper<Network::ListenerConfig>> existing_listeners;
+
+  // Construct a minimal listener that would pass proto validation.
+  auto listener = listeners.Add();
+  listener->set_name("invalid-listener");
+  auto socket_address = listener->mutable_address()->mutable_socket_address();
+  socket_address->set_address("invalid-address");
+  socket_address->set_port_value(1);
+  listener->add_filter_chains();
+
+  EXPECT_CALL(listener_manager_, listeners()).WillOnce(Return(existing_listeners));
+
+  EXPECT_CALL(listener_manager_, addOrUpdateListener(_, true))
+      .WillOnce(Throw(EnvoyException("something is wrong")));
+
+  EXPECT_THROW_WITH_MESSAGE(lds_->onConfigUpdate(listeners, ""), EnvoyException,
+                            "Error adding/updating listener invalid-listener: something is wrong");
+  EXPECT_CALL(request_, cancel());
 }
 
 TEST_F(LdsApiTest, BadLocalInfo) {
@@ -151,7 +182,7 @@ TEST_F(LdsApiTest, BadLocalInfo) {
   )EOF";
 
   Json::ObjectSharedPtr config = Json::Factory::loadFromString(config_json);
-  envoy::api::v2::ConfigSource lds_config;
+  envoy::api::v2::core::ConfigSource lds_config;
   Config::Utility::translateLdsConfig(*config, lds_config);
   Upstream::ClusterManager::ClusterInfoMap cluster_map;
   Upstream::MockCluster cluster;

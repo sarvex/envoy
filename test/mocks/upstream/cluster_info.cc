@@ -22,13 +22,19 @@ MockLoadBalancerSubsetInfo::MockLoadBalancerSubsetInfo() {
 
 MockLoadBalancerSubsetInfo::~MockLoadBalancerSubsetInfo() {}
 
+MockIdleTimeEnabledClusterInfo::MockIdleTimeEnabledClusterInfo() {
+  ON_CALL(*this, idleTimeout()).WillByDefault(Return(std::chrono::milliseconds(1000)));
+}
+
+MockIdleTimeEnabledClusterInfo::~MockIdleTimeEnabledClusterInfo() {}
+
 MockClusterInfo::MockClusterInfo()
     : stats_(ClusterInfoImpl::generateStats(stats_store_)),
       transport_socket_factory_(new Network::RawBufferSocketFactory),
       load_report_stats_(ClusterInfoImpl::generateLoadReportStats(load_report_stats_store_)),
       resource_manager_(new Upstream::ResourceManagerImpl(runtime_, "fake_key", 1, 1024, 1024, 1)) {
-
   ON_CALL(*this, connectTimeout()).WillByDefault(Return(std::chrono::milliseconds(1)));
+  ON_CALL(*this, idleTimeout()).WillByDefault(Return(absl::optional<std::chrono::milliseconds>()));
   ON_CALL(*this, name()).WillByDefault(ReturnRef(name_));
   ON_CALL(*this, http2Settings()).WillByDefault(ReturnRef(http2_settings_));
   ON_CALL(*this, maxRequestsPerConnection())
@@ -45,6 +51,8 @@ MockClusterInfo::MockClusterInfo()
   ON_CALL(*this, sourceAddress()).WillByDefault(ReturnRef(source_address_));
   ON_CALL(*this, lbSubsetInfo()).WillByDefault(ReturnRef(lb_subset_));
   ON_CALL(*this, lbRingHashConfig()).WillByDefault(ReturnRef(lb_ring_hash_config_));
+  ON_CALL(*this, lbConfig()).WillByDefault(ReturnRef(lb_config_));
+  ON_CALL(*this, clusterSocketOptions()).WillByDefault(ReturnRef(cluster_socket_options_));
 }
 
 MockClusterInfo::~MockClusterInfo() {}

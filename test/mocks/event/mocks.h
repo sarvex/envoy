@@ -29,17 +29,19 @@ public:
   MockDispatcher();
   ~MockDispatcher();
 
-  Network::ConnectionPtr createServerConnection(Network::ConnectionSocketPtr&& socket,
-                                                Ssl::Context* ssl_ctx) override {
-    return Network::ConnectionPtr{createServerConnection_(socket.get(), ssl_ctx)};
+  Network::ConnectionPtr
+  createServerConnection(Network::ConnectionSocketPtr&& socket,
+                         Network::TransportSocketPtr&& transport_socket) override {
+    return Network::ConnectionPtr{createServerConnection_(socket.get(), transport_socket.get())};
   }
 
   Network::ClientConnectionPtr
   createClientConnection(Network::Address::InstanceConstSharedPtr address,
                          Network::Address::InstanceConstSharedPtr source_address,
-                         Network::TransportSocketPtr&& transport_socket) override {
+                         Network::TransportSocketPtr&& transport_socket,
+                         const Network::ConnectionSocket::OptionsSharedPtr& options) override {
     return Network::ClientConnectionPtr{
-        createClientConnection_(address, source_address, transport_socket)};
+        createClientConnection_(address, source_address, transport_socket, options)};
   }
 
   FileEventPtr createFileEvent(int fd, FileReadyCb cb, FileTriggerType trigger,
@@ -51,7 +53,7 @@ public:
     return Filesystem::WatcherPtr{createFilesystemWatcher_()};
   }
 
-  Network::ListenerPtr createListener(Network::ListenSocket& socket, Network::ListenerCallbacks& cb,
+  Network::ListenerPtr createListener(Network::Socket& socket, Network::ListenerCallbacks& cb,
                                       bool bind_to_port,
                                       bool hand_off_restored_destination_connections) override {
     return Network::ListenerPtr{
@@ -61,7 +63,7 @@ public:
   TimerPtr createTimer(TimerCb cb) override { return TimerPtr{createTimer_(cb)}; }
 
   void deferredDelete(DeferredDeletablePtr&& to_delete) override {
-    deferredDelete_(to_delete);
+    deferredDelete_(to_delete.get());
     if (to_delete) {
       to_delete_.push_back(std::move(to_delete));
     }
@@ -74,11 +76,14 @@ public:
   // Event::Dispatcher
   MOCK_METHOD0(clearDeferredDeleteList, void());
   MOCK_METHOD2(createServerConnection_,
-               Network::Connection*(Network::ConnectionSocket* socket, Ssl::Context* ssl_ctx));
-  MOCK_METHOD3(createClientConnection_,
-               Network::ClientConnection*(Network::Address::InstanceConstSharedPtr address,
-                                          Network::Address::InstanceConstSharedPtr source_address,
-                                          Network::TransportSocketPtr& transport_socket));
+               Network::Connection*(Network::ConnectionSocket* socket,
+                                    Network::TransportSocket* transport_socket));
+  MOCK_METHOD4(
+      createClientConnection_,
+      Network::ClientConnection*(Network::Address::InstanceConstSharedPtr address,
+                                 Network::Address::InstanceConstSharedPtr source_address,
+                                 Network::TransportSocketPtr& transport_socket,
+                                 const Network::ConnectionSocket::OptionsSharedPtr& options));
   MOCK_METHOD1(createDnsResolver,
                Network::DnsResolverSharedPtr(
                    const std::vector<Network::Address::InstanceConstSharedPtr>& resolvers));
@@ -86,11 +91,11 @@ public:
                FileEvent*(int fd, FileReadyCb cb, FileTriggerType trigger, uint32_t events));
   MOCK_METHOD0(createFilesystemWatcher_, Filesystem::Watcher*());
   MOCK_METHOD4(createListener_,
-               Network::Listener*(Network::ListenSocket& socket, Network::ListenerCallbacks& cb,
+               Network::Listener*(Network::Socket& socket, Network::ListenerCallbacks& cb,
                                   bool bind_to_port,
                                   bool hand_off_restored_destination_connections));
   MOCK_METHOD1(createTimer_, Timer*(TimerCb cb));
-  MOCK_METHOD1(deferredDelete_, void(DeferredDeletablePtr& to_delete));
+  MOCK_METHOD1(deferredDelete_, void(DeferredDeletable* to_delete));
   MOCK_METHOD0(exit, void());
   MOCK_METHOD2(listenForSignal_, SignalEvent*(int signal_num, SignalCb cb));
   MOCK_METHOD1(post, void(std::function<void()> callback));

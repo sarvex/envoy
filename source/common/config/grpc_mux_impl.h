@@ -2,15 +2,16 @@
 
 #include <unordered_map>
 
+#include "envoy/common/time.h"
+#include "envoy/common/token_bucket.h"
 #include "envoy/config/grpc_mux.h"
 #include "envoy/config/subscription.h"
 #include "envoy/event/dispatcher.h"
 #include "envoy/grpc/async_client.h"
+#include "envoy/grpc/status.h"
 #include "envoy/upstream/cluster_manager.h"
 
 #include "common/common/logger.h"
-
-#include "api/discovery.pb.h"
 
 namespace Envoy {
 namespace Config {
@@ -22,8 +23,9 @@ class GrpcMuxImpl : public GrpcMux,
                     Grpc::TypedAsyncStreamCallbacks<envoy::api::v2::DiscoveryResponse>,
                     Logger::Loggable<Logger::Id::upstream> {
 public:
-  GrpcMuxImpl(const envoy::api::v2::Node& node, Grpc::AsyncClientPtr async_client,
-              Event::Dispatcher& dispatcher, const Protobuf::MethodDescriptor& service_method);
+  GrpcMuxImpl(const envoy::api::v2::core::Node& node, Grpc::AsyncClientPtr async_client,
+              Event::Dispatcher& dispatcher, const Protobuf::MethodDescriptor& service_method,
+              MonotonicTimeSource& time_source = ProdMonotonicTimeSource::instance_);
   ~GrpcMuxImpl();
 
   void start() override;
@@ -84,9 +86,13 @@ private:
     bool pending_{};
     // Has this API been tracked in subscriptions_?
     bool subscribed_{};
+    // Detects when Envoy is making too many requests.
+    TokenBucketPtr limit_request_;
+    // Limits warning messages when too many requests is detected.
+    TokenBucketPtr limit_log_;
   };
 
-  envoy::api::v2::Node node_;
+  envoy::api::v2::core::Node node_;
   Grpc::AsyncClientPtr async_client_;
   Grpc::AsyncStream* stream_{};
   const Protobuf::MethodDescriptor& service_method_;
@@ -94,6 +100,7 @@ private:
   // Envoy's dependendency ordering.
   std::list<std::string> subscriptions_;
   Event::TimerPtr retry_timer_;
+  MonotonicTimeSource& time_source_;
 };
 
 class NullGrpcMuxImpl : public GrpcMux {

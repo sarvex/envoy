@@ -39,17 +39,34 @@ std::string getOrCreateUnixDomainSocketDirectory() {
   return std::string(test_udsdir);
 }
 
+std::string getTemporaryDirectory() {
+  if (::getenv("TEST_TMPDIR")) {
+    return TestEnvironment::getCheckedEnvVar("TEST_TMPDIR");
+  }
+  if (::getenv("TMPDIR")) {
+    return TestEnvironment::getCheckedEnvVar("TMPDIR");
+  }
+  return "/tmp";
+}
+
 // Allow initializeOptions() to remember CLI args for getOptions().
 int argc_;
 char** argv_;
 
 } // namespace
 
-std::string TestEnvironment::getCheckedEnvVar(const std::string& var) {
-  // Bazel style temp dirs. Should be set by test runner or Bazel.
+absl::optional<std::string> TestEnvironment::getOptionalEnvVar(const std::string& var) {
   const char* path = ::getenv(var.c_str());
-  RELEASE_ASSERT(path != nullptr);
+  if (path == nullptr) {
+    return {};
+  }
   return std::string(path);
+}
+
+std::string TestEnvironment::getCheckedEnvVar(const std::string& var) {
+  auto optional = getOptionalEnvVar(var);
+  RELEASE_ASSERT(optional.has_value());
+  return optional.value();
 }
 
 void TestEnvironment::initializeOptions(int argc, char** argv) {
@@ -87,13 +104,13 @@ std::vector<Network::Address::IpVersion> TestEnvironment::getIpVersionsForTest()
 }
 
 Server::Options& TestEnvironment::getOptions() {
-  static OptionsImpl* options =
-      new OptionsImpl(argc_, argv_, [](uint64_t, uint64_t) { return "1"; }, spdlog::level::err);
+  static OptionsImpl* options = new OptionsImpl(
+      argc_, argv_, [](uint64_t, uint64_t, bool) { return "1"; }, spdlog::level::err);
   return *options;
 }
 
 const std::string& TestEnvironment::temporaryDirectory() {
-  CONSTRUCT_ON_FIRST_USE(std::string, getCheckedEnvVar("TEST_TMPDIR"));
+  CONSTRUCT_ON_FIRST_USE(std::string, getTemporaryDirectory());
 }
 
 const std::string& TestEnvironment::runfilesDirectory() {

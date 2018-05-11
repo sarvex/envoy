@@ -12,13 +12,13 @@
 #include "envoy/server/options.h"
 
 #include "common/common/assert.h"
-#include "common/common/shared_memory_hash_set.h"
+#include "common/common/block_memory_hash_set.h"
 #include "common/stats/stats_impl.h"
 
 namespace Envoy {
 namespace Server {
 
-typedef SharedMemoryHashSet<Stats::RawStatData> RawStatDataSet;
+typedef BlockMemoryHashSet<Stats::RawStatData> RawStatDataSet;
 
 /**
  * Shared memory segment. This structure is laid directly into shared memory and is used amongst
@@ -64,7 +64,7 @@ private:
   pthread_mutex_t access_log_lock_;
   pthread_mutex_t stat_lock_;
   pthread_mutex_t init_lock_;
-  alignas(SharedMemoryHashSet<Stats::RawStatData>) uint8_t stats_set_data_[];
+  alignas(BlockMemoryHashSet<Stats::RawStatData>) uint8_t stats_set_data_[];
 
   friend class HotRestartImpl;
 };
@@ -104,7 +104,6 @@ public:
   void unlock() override {
     int rc = pthread_mutex_unlock(&mutex_);
     ASSERT(rc == 0);
-    UNREFERENCED_PARAMETER(rc);
   }
 
 private:
@@ -120,9 +119,6 @@ class HotRestartImpl : public HotRestart,
 public:
   HotRestartImpl(Options& options);
 
-  Thread::BasicLockable& logLock() { return log_lock_; }
-  Thread::BasicLockable& accessLogLock() { return access_log_lock_; }
-
   // Server::HotRestart
   void drainParentListeners() override;
   int duplicateParentListenSocket(const std::string& address) override;
@@ -132,6 +128,9 @@ public:
   void terminateParent() override;
   void shutdown() override;
   std::string version() override;
+  Thread::BasicLockable& logLock() override { return log_lock_; }
+  Thread::BasicLockable& accessLogLock() override { return access_log_lock_; }
+  Stats::RawStatDataAllocator& statsAllocator() override { return *this; }
 
   /**
    * envoy --hot_restart_version doesn't initialize Envoy, but computes the version string
@@ -208,7 +207,7 @@ private:
                                    RawStatDataSet& stats_set);
 
   Options& options_;
-  SharedMemoryHashSetOptions stats_set_options_;
+  BlockMemoryHashSetOptions stats_set_options_;
   SharedMemory& shmem_;
   std::unique_ptr<RawStatDataSet> stats_set_;
   ProcessSharedMutex log_lock_;

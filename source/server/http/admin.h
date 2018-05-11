@@ -20,15 +20,20 @@
 #include "common/common/macros.h"
 #include "common/http/conn_manager_impl.h"
 #include "common/http/date_provider_impl.h"
+#include "common/http/default_server_string.h"
 #include "common/http/utility.h"
+#include "common/network/raw_buffer_socket.h"
+#include "common/stats/stats_impl.h"
 
-#include "server/config/network/http_connection_manager.h"
+#include "server/http/config_tracker_impl.h"
+
+#include "absl/strings/string_view.h"
 
 namespace Envoy {
 namespace Server {
 
 /**
- * Implementation of Server::admin.
+ * Implementation of Server::Admin.
  */
 class AdminImpl : public Admin,
                   public Network::FilterChainFactory,
@@ -40,16 +45,19 @@ public:
             const std::string& address_out_path, Network::Address::InstanceConstSharedPtr address,
             Server::Instance& server, Stats::ScopePtr&& listener_scope);
 
-  Http::Code runCallback(const std::string& path_and_query, Http::HeaderMap& response_headers,
-                         Buffer::Instance& response);
-  const Network::ListenSocket& socket() override { return *socket_; }
-  Network::ListenSocket& mutable_socket() { return *socket_; }
+  Http::Code runCallback(absl::string_view path_and_query, const Http::HeaderMap& request_headers,
+                         Http::HeaderMap& response_headers, Buffer::Instance& response);
+  const Network::Socket& socket() override { return *socket_; }
+  Network::Socket& mutable_socket() { return *socket_; }
   Network::ListenerConfig& listener() { return listener_; }
 
   // Server::Admin
+  // TODO(jsedgwick) These can be managed with a generic version of ConfigTracker.
+  // Wins would be no manual removeHandler() and code reuse.
   bool addHandler(const std::string& prefix, const std::string& help_text, HandlerCb callback,
                   bool removable, bool mutates_server_state) override;
   bool removeHandler(const std::string& prefix) override;
+  ConfigTracker& getConfigTracker() override;
 
   // Network::FilterChainFactory
   bool createNetworkFilterChain(Network::Connection& connection) override;
@@ -67,14 +75,13 @@ public:
   std::chrono::milliseconds drainTimeout() override { return std::chrono::milliseconds(100); }
   Http::FilterChainFactory& filterFactory() override { return *this; }
   bool generateRequestId() override { return false; }
-  const Optional<std::chrono::milliseconds>& idleTimeout() override { return idle_timeout_; }
+  const absl::optional<std::chrono::milliseconds>& idleTimeout() override { return idle_timeout_; }
   Router::RouteConfigProvider& routeConfigProvider() override { return route_config_provider_; }
-  const std::string& serverName() override {
-    return Server::Configuration::HttpConnectionManagerConfig::DEFAULT_SERVER_STRING;
-  }
+  const std::string& serverName() override { return Http::DefaultServerString::get(); }
   Http::ConnectionManagerStats& stats() override { return stats_; }
   Http::ConnectionManagerTracingStats& tracingStats() override { return tracing_stats_; }
   bool useRemoteAddress() override { return true; }
+  uint32_t xffNumTrustedHops() const override { return 0; }
   Http::ForwardClientCertType forwardClientCert() override {
     return Http::ForwardClientCertType::Sanitize;
   }
@@ -82,9 +89,11 @@ public:
     return set_current_client_cert_details_;
   }
   const Network::Address::Instance& localAddress() override;
-  const Optional<std::string>& userAgent() override { return user_agent_; }
+  const absl::optional<std::string>& userAgent() override { return user_agent_; }
   const Http::TracingConnectionManagerConfig* tracingConfig() override { return nullptr; }
   Http::ConnectionManagerListenerStats& listenerStats() override { return listener_.stats_; }
+  bool proxy100Continue() const override { return false; }
+  const Http::Http1Settings& http1Settings() const override { return http1_settings_; }
 
 private:
   /**
@@ -106,10 +115,12 @@ private:
 
     // Router::RouteConfigProvider
     Router::ConfigConstSharedPtr config() override { return config_; }
-    const std::string versionInfo() const override { CONSTRUCT_ON_FIRST_USE(std::string, ""); }
+    absl::optional<ConfigInfo> configInfo() const override { return {}; }
 
     Router::ConfigConstSharedPtr config_;
   };
+
+  friend class AdminStatsTest;
 
   /**
    * Attempt to change the log level of a logger or all loggers
@@ -122,7 +133,9 @@ private:
   void addOutlierInfo(const std::string& cluster_name,
                       const Upstream::Outlier::Detector* outlier_detector,
                       Buffer::Instance& response);
-  static std::string statsAsJson(const std::map<std::string, uint64_t>& all_stats);
+  static std::string statsAsJson(const std::map<std::string, uint64_t>& all_stats,
+                                 const std::list<Stats::ParentHistogramSharedPtr>& all_histograms,
+                                 bool pretty_print = false);
   static std::string
   runtimeAsJson(const std::vector<std::pair<std::string, Runtime::Snapshot::Entry>>& entries);
   std::vector<const UrlHandler*> sortedHandlers() const;
@@ -132,38 +145,44 @@ private:
   /**
    * URL handlers.
    */
-  Http::Code handlerAdminHome(const std::string& path_and_query, Http::HeaderMap& response_headers,
+  Http::Code handlerAdminHome(absl::string_view path_and_query, Http::HeaderMap& response_headers,
                               Buffer::Instance& response);
-  Http::Code handlerCerts(const std::string& path_and_query, Http::HeaderMap& response_headers,
+  Http::Code handlerCerts(absl::string_view path_and_query, Http::HeaderMap& response_headers,
                           Buffer::Instance& response);
-  Http::Code handlerClusters(const std::string& path_and_query, Http::HeaderMap& response_headers,
+  Http::Code handlerClusters(absl::string_view path_and_query, Http::HeaderMap& response_headers,
                              Buffer::Instance& response);
-  Http::Code handlerCpuProfiler(const std::string& path_and_query,
-                                Http::HeaderMap& response_headers, Buffer::Instance& response);
-  Http::Code handlerHealthcheckFail(const std::string& path_and_query,
+  Http::Code handlerConfigDump(absl::string_view path_and_query, Http::HeaderMap& response_headers,
+                               Buffer::Instance& response) const;
+  Http::Code handlerCpuProfiler(absl::string_view path_and_query, Http::HeaderMap& response_headers,
+                                Buffer::Instance& response);
+  Http::Code handlerHealthcheckFail(absl::string_view path_and_query,
                                     Http::HeaderMap& response_headers, Buffer::Instance& response);
-  Http::Code handlerHealthcheckOk(const std::string& path_and_query,
+  Http::Code handlerHealthcheckOk(absl::string_view path_and_query,
                                   Http::HeaderMap& response_headers, Buffer::Instance& response);
-  Http::Code handlerHelp(const std::string& path_and_query, Http::HeaderMap& response_headers,
+  Http::Code handlerHelp(absl::string_view path_and_query, Http::HeaderMap& response_headers,
                          Buffer::Instance& response);
-  Http::Code handlerHotRestartVersion(const std::string& path_and_query,
+  Http::Code handlerHotRestartVersion(absl::string_view path_and_query,
                                       Http::HeaderMap& response_headers,
                                       Buffer::Instance& response);
-  Http::Code handlerListenerInfo(const std::string& path_and_query,
+  Http::Code handlerListenerInfo(absl::string_view path_and_query,
                                  Http::HeaderMap& response_headers, Buffer::Instance& response);
-  Http::Code handlerLogging(const std::string& path_and_query, Http::HeaderMap& response_headers,
+  Http::Code handlerLogging(absl::string_view path_and_query, Http::HeaderMap& response_headers,
                             Buffer::Instance& response);
   Http::Code handlerMain(const std::string& path, Buffer::Instance& response);
-  Http::Code handlerQuitQuitQuit(const std::string& path_and_query,
+  Http::Code handlerQuitQuitQuit(absl::string_view path_and_query,
                                  Http::HeaderMap& response_headers, Buffer::Instance& response);
-  Http::Code handlerResetCounters(const std::string& path_and_query,
+  Http::Code handlerResetCounters(absl::string_view path_and_query,
                                   Http::HeaderMap& response_headers, Buffer::Instance& response);
-  Http::Code handlerServerInfo(const std::string& path_and_query, Http::HeaderMap& response_headers,
+  Http::Code handlerServerInfo(absl::string_view path_and_query, Http::HeaderMap& response_headers,
                                Buffer::Instance& response);
-  Http::Code handlerStats(const std::string& path_and_query, Http::HeaderMap& response_headers,
+  Http::Code handlerStats(absl::string_view path_and_query, Http::HeaderMap& response_headers,
                           Buffer::Instance& response);
-  Http::Code handlerRuntime(const std::string& path_and_query, Http::HeaderMap& response_headers,
+  Http::Code handlerPrometheusStats(absl::string_view path_and_query,
+                                    Http::HeaderMap& response_headers, Buffer::Instance& response);
+  Http::Code handlerRuntime(absl::string_view path_and_query, Http::HeaderMap& response_headers,
                             Buffer::Instance& response);
+  Http::Code handlerRuntimeModify(absl::string_view path_and_query,
+                                  Http::HeaderMap& response_headers, Buffer::Instance& response);
 
   class AdminListener : public Network::ListenerConfig {
   public:
@@ -173,8 +192,10 @@ private:
 
     // Network::ListenerConfig
     Network::FilterChainFactory& filterChainFactory() override { return parent_; }
-    Network::ListenSocket& socket() override { return parent_.mutable_socket(); }
-    Ssl::ServerContext* defaultSslContext() override { return nullptr; }
+    Network::Socket& socket() override { return parent_.mutable_socket(); }
+    Network::TransportSocketFactory& transportSocketFactory() override {
+      return parent_.transport_socket_factory_;
+    }
     bool bindToPort() override { return true; }
     bool handOffRestoredDestinationConnections() const override { return false; }
     uint32_t perConnectionBufferLimitBytes() override { return 0; }
@@ -191,16 +212,22 @@ private:
   Server::Instance& server_;
   std::list<AccessLog::InstanceSharedPtr> access_logs_;
   const std::string profile_path_;
-  Network::ListenSocketPtr socket_;
+  Network::SocketPtr socket_;
+  Network::RawBufferSocketFactory transport_socket_factory_;
   Http::ConnectionManagerStats stats_;
+  // Note: this is here to essentially blackhole the tracing stats since they aren't used in the
+  // Admin case.
+  Stats::IsolatedStoreImpl no_op_store_;
   Http::ConnectionManagerTracingStats tracing_stats_;
   NullRouteConfigProvider route_config_provider_;
   std::list<UrlHandler> handlers_;
-  Optional<std::chrono::milliseconds> idle_timeout_;
-  Optional<std::string> user_agent_;
+  absl::optional<std::chrono::milliseconds> idle_timeout_;
+  absl::optional<std::string> user_agent_;
   Http::SlowDateProviderImpl date_provider_;
   std::vector<Http::ClientCertDetailsType> set_current_client_cert_details_;
   AdminListener listener_;
+  Http::Http1Settings http1_settings_;
+  ConfigTrackerImpl config_tracker_;
 };
 
 /**
@@ -214,8 +241,7 @@ public:
   void onDestroy() override {}
 
   // Http::StreamDecoderFilter
-  Http::FilterHeadersStatus decodeHeaders(Http::HeaderMap& response_headers,
-                                          bool end_stream) override;
+  Http::FilterHeadersStatus decodeHeaders(Http::HeaderMap& headers, bool end_stream) override;
   Http::FilterDataStatus decodeData(Buffer::Instance& data, bool end_stream) override;
   Http::FilterTrailersStatus decodeTrailers(Http::HeaderMap& trailers) override;
   void setDecoderFilterCallbacks(Http::StreamDecoderFilterCallbacks& callbacks) override {
@@ -243,10 +269,11 @@ public:
   /**
    * Extracts counters and gauges and relevant tags, appending them to
    * the response buffer after sanitizing the metric / label names.
+   * @return uint64_t total number of metric types inserted in response.
    */
-  static void statsAsPrometheus(const std::list<Stats::CounterSharedPtr>& counters,
-                                const std::list<Stats::GaugeSharedPtr>& gauges,
-                                Buffer::Instance& response);
+  static uint64_t statsAsPrometheus(const std::list<Stats::CounterSharedPtr>& counters,
+                                    const std::list<Stats::GaugeSharedPtr>& gauges,
+                                    Buffer::Instance& response);
   /**
    * Format the given tags, returning a string as a comma-separated list
    * of <tag_name>="<tag_value>" pairs.

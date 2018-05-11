@@ -56,6 +56,19 @@ envoy_cc_test(
     ],
 )
 
+envoy_cc_test(
+    name = "google_async_client_impl_test",
+    srcs = envoy_select_google_grpc(["google_async_client_impl_test.cc"]),
+    deps = [
+        "//source/common/event:dispatcher_lib",
+        "//source/common/stats:stats_lib",
+        "//source/common/tracing:http_tracer_lib",
+        "//test/mocks/grpc:grpc_mocks",
+        "//test/mocks/tracing:tracing_mocks",
+        "//test/proto:helloworld_proto",
+    ] + envoy_select_google_grpc(["//source/common/grpc:google_async_client_lib"]),
+)
+
 envoy_cc_test_library(
     name = "grpc_client_integration_lib",
     hdrs = ["grpc_client_integration.h"],
@@ -68,6 +81,7 @@ envoy_cc_test_library(
 envoy_cc_test(
     name = "grpc_client_integration_test",
     srcs = ["grpc_client_integration_test.cc"],
+    data = ["//test/config/integration/certs"],
     deps = [
         ":grpc_client_integration_lib",
         "//source/common/common:enum_to_int",
@@ -76,6 +90,9 @@ envoy_cc_test(
         "//source/common/http/http2:conn_pool_lib",
         "//source/common/network:connection_lib",
         "//source/common/network:raw_buffer_socket_lib",
+        "//source/common/ssl:context_lib",
+        "//source/common/ssl:context_config_lib",
+        "//source/common/ssl:ssl_socket_lib",
         "//source/common/stats:stats_lib",
         "//test/integration:integration_lib",
         "//test/mocks/grpc:grpc_mocks",
@@ -87,62 +104,5 @@ envoy_cc_test(
         "//test/mocks/upstream:upstream_mocks",
         "//test/proto:helloworld_proto",
         "//test/test_common:environment_lib",
-    ],
-)
-
-envoy_cc_test(
-    name = "http1_bridge_filter_test",
-    srcs = ["http1_bridge_filter_test.cc"],
-    deps = [
-        "//source/common/buffer:buffer_lib",
-        "//source/common/grpc:http1_bridge_filter_lib",
-        "//source/common/http:header_map_lib",
-        "//test/mocks/http:http_mocks",
-        "//test/mocks/upstream:upstream_mocks",
-        "//test/test_common:utility_lib",
-    ],
-)
-
-envoy_cc_test(
-    name = "google_grpc_test",
-    srcs = envoy_select_google_grpc(["google_grpc_test.cc"]),
-    external_deps = ["grpc"],
-)
-
-envoy_cc_test(
-    name = "grpc_web_filter_test",
-    srcs = ["grpc_web_filter_test.cc"],
-    deps = [
-        "//source/common/grpc:grpc_web_filter_lib",
-        "//test/mocks/http:http_mocks",
-        "//test/mocks/upstream:upstream_mocks",
-        "//test/test_common:utility_lib",
-    ],
-)
-
-envoy_cc_test(
-    name = "json_transcoder_filter_test",
-    srcs = ["json_transcoder_filter_test.cc"],
-    data = [
-        "//test/proto:bookstore.proto",
-        "//test/proto:bookstore_proto_descriptor",
-    ],
-    deps = [
-        "//source/common/config:filter_json_lib",
-        "//source/common/grpc:json_transcoder_filter_lib",
-        "//test/mocks/http:http_mocks",
-        "//test/mocks/upstream:upstream_mocks",
-        "//test/proto:bookstore_proto",
-        "//test/test_common:environment_lib",
-        "//test/test_common:utility_lib",
-    ],
-)
-
-envoy_cc_test(
-    name = "transcoder_input_stream_test",
-    srcs = ["transcoder_input_stream_test.cc"],
-    deps = [
-        "//source/common/buffer:buffer_lib",
-        "//source/common/grpc:transcoder_input_stream_lib",
-    ],
+    ] + envoy_select_google_grpc(["//source/common/grpc:google_async_client_lib"]),
 )
