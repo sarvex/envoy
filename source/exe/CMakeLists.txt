@@ -24,7 +24,6 @@ target_link_libraries(envoy_main_common_lib PUBLIC
     config_network_mongo_proxy_lib
     config_network_ratelimit_lib
     config_network_redis_proxy_lib
-    config_network_tcp_proxy_lib
     health_check_lib
     )
 
@@ -38,6 +37,7 @@ add_executable(envoy
     $<TARGET_OBJECTS:config_http_buffer_lib>
     $<TARGET_OBJECTS:config_http_router_lib>
     $<TARGET_OBJECTS:config_network_raw_buffer_lib>
+    $<TARGET_OBJECTS:config_network_tcp_proxy_lib>
 ) 
     
 target_link_libraries(

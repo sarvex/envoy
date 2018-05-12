@@ -14,4 +14,4 @@ add_library(config_network_raw_buffer_lib OBJECT raw_buffer_socket.cc)
 
 add_library(config_network_redis_proxy_lib redis_proxy.cc)
 
-add_library(config_network_tcp_proxy_lib tcp_proxy.cc)
+add_library(config_network_tcp_proxy_lib OBJECT tcp_proxy.cc)
