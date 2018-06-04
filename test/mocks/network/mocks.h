@@ -9,6 +9,8 @@
 #include "envoy/network/filter.h"
 #include "envoy/network/transport_socket.h"
 
+#include "envoy/common/socket_fd.h"
+
 #include "common/stats/stats_impl.h"
 
 #include "test/mocks/event/mocks.h"
@@ -255,7 +257,11 @@ public:
   ~MockListenSocket();
 
   MOCK_CONST_METHOD0(localAddress, Address::InstanceConstSharedPtr());
+#if defined(WIN32)
+  MOCK_METHOD0(fd, SOCKET_FD_TYPE());
+#else
   MOCK_METHOD0(fd, int());
+#endif
   MOCK_METHOD0(close, void());
 
   Address::InstanceConstSharedPtr local_address_;
@@ -332,7 +338,12 @@ public:
   MOCK_CONST_METHOD1(bind, int(int));
   MOCK_CONST_METHOD1(connect, int(int));
   MOCK_CONST_METHOD0(ip, Address::Ip*());
+#if defined(WIN32)
+  MOCK_CONST_METHOD1(socket, SOCKET_FD_TYPE(Address::SocketType));
+#else
   MOCK_CONST_METHOD1(socket, int(Address::SocketType));
+#endif
+
   MOCK_CONST_METHOD0(type, Address::Type());
 
   const std::string& asString() const override { return physical_; }

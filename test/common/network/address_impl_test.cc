@@ -1,8 +1,13 @@
+#if defined(WIN32)
+typedef unsigned int sa_family_t;
+#else
+
 #include <arpa/inet.h>
-#include <fcntl.h>
 #include <netinet/ip.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#endif
+#include <fcntl.h>
 #include <unistd.h>
 
 #include <string>
