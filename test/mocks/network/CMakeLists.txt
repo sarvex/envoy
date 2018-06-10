@@ -4,5 +4,5 @@ target_link_libraries(network_mocks
     address_lib
     network_utility_lib
     event_mocks
-    Ws2_32.lib
+    ws2_32.lib
 )

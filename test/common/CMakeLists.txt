@@ -4,7 +4,9 @@ add_subdirectory(api)
 add_subdirectory(buffer)
 add_subdirectory(config)
 add_subdirectory(ssl)
-
+add_subdirectory(network)
+add_subdirectory(http)
+add_subdirectory(upstream)
 #TODO Source not compiled for Win32, hence skipping test folders
 #add_subdirectory(compressor)
 #add_subdirectory(decompressor)

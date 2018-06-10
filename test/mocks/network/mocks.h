@@ -335,14 +335,10 @@ public:
     return asString() == other.asString();
   }
 
-  MOCK_CONST_METHOD1(bind, int(int));
-  MOCK_CONST_METHOD1(connect, int(int));
+  MOCK_CONST_METHOD1(bind, int(SOCKET_FD_TYPE));
+  MOCK_CONST_METHOD1(connect, int(SOCKET_FD_TYPE));
   MOCK_CONST_METHOD0(ip, Address::Ip*());
-#if defined(WIN32)
   MOCK_CONST_METHOD1(socket, SOCKET_FD_TYPE(Address::SocketType));
-#else
-  MOCK_CONST_METHOD1(socket, int(Address::SocketType));
-#endif
 
   MOCK_CONST_METHOD0(type, Address::Type());
 
