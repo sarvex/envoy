@@ -83,6 +83,7 @@ ProdListenerComponentFactory::createListenSocket(Network::Address::InstanceConst
   ASSERT(address->type() == Network::Address::Type::Ip ||
          address->type() == Network::Address::Type::Pipe);
 
+#if !defined(WIN32)
   // For each listener config we share a single socket among all threaded listeners.
   // First we try to get the socket from our parent if applicable.
   if (address->type() == Network::Address::Type::Pipe) {
@@ -94,6 +95,7 @@ ProdListenerComponentFactory::createListenSocket(Network::Address::InstanceConst
     }
     return std::make_shared<Network::UdsListenSocket>(address);
   }
+#endif
 
   const std::string addr = fmt::format("tcp://{}", address->asString());
   const int fd = server_.hotRestart().duplicateParentListenSocket(addr);

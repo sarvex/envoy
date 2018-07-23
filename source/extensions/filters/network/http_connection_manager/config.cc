@@ -4,8 +4,9 @@
 #include <memory>
 #include <string>
 #include <vector>
-
+#if !defined(DISABLE_PROTO_VALIDATE)
 #include "envoy/config/filter/network/http_connection_manager/v2/http_connection_manager.pb.validate.h"
+#endif
 #include "envoy/filesystem/filesystem.h"
 #include "envoy/network/connection.h"
 #include "envoy/registry/registry.h"

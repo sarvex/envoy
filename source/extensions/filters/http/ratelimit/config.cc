@@ -2,8 +2,9 @@
 
 #include <chrono>
 #include <string>
-
+#if !defined(DISABLE_PROTO_VALIDATE)
 #include "envoy/config/filter/http/rate_limit/v2/rate_limit.pb.validate.h"
+#endif
 #include "envoy/registry/registry.h"
 
 #include "common/config/filter_json.h"

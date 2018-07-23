@@ -273,7 +273,11 @@ std::string AccessLogDateTimeFormatter::fromTime(const SystemTime& time) {
       cached_time.epoch_time_seconds != epoch_time_seconds) {
     time_t time = static_cast<time_t>(epoch_time_seconds.count());
     tm date_time;
+#if !defined(WIN32)
     gmtime_r(&time, &date_time);
+#else
+    gmtime_s(&date_time, &time);
+#endif
     cached_time.formatted_time_length =
         strftime(cached_time.formatted_time, sizeof(cached_time.formatted_time), DefaultDateFormat,
                  &date_time);
