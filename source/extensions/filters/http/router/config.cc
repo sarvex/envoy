@@ -1,6 +1,9 @@
 #include "extensions/filters/http/router/config.h"
 
+#if !defined(DISABLE_PROTO_VALIDATE)
 #include "envoy/config/filter/http/router/v2/router.pb.validate.h"
+#endif
+
 #include "envoy/registry/registry.h"
 
 #include "common/config/filter_json.h"

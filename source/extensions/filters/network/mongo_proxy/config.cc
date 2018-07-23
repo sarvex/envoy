@@ -1,6 +1,7 @@
 #include "extensions/filters/network/mongo_proxy/config.h"
-
+#if !defined(DISABLE_PROTO_VALIDATE)
 #include "envoy/config/filter/network/mongo_proxy/v2/mongo_proxy.pb.validate.h"
+#endif
 #include "envoy/network/connection.h"
 #include "envoy/registry/registry.h"
 

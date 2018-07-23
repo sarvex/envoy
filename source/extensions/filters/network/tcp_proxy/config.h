@@ -1,6 +1,8 @@
 #pragma once
 
+#if !defined(DISABLE_PROTO_VALIDATE)
 #include "envoy/config/filter/network/tcp_proxy/v2/tcp_proxy.pb.validate.h"
+#endif
 #include "envoy/server/filter_config.h"
 
 namespace Envoy {

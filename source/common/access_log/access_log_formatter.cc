@@ -74,6 +74,13 @@ std::string FormatterImpl::format(const Http::HeaderMap& request_headers,
   return log_line;
 }
 
+#if defined(WIN32)
+const size_t AccessLogFormatParser::ReqParamStart = std::strlen("REQ(");
+const size_t AccessLogFormatParser::RespParamStart = std::strlen("RESP(");
+const size_t AccessLogFormatParser::TrailParamStart = std::strlen("TRAILER(");
+const size_t AccessLogFormatParser::StartTimeParamStart = std::strlen("START_TIME(");
+#endif
+
 void AccessLogFormatParser::parseCommandHeader(const std::string& token, const size_t start,
                                                std::string& main_header,
                                                std::string& alternative_header,

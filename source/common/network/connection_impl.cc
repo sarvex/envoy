@@ -589,14 +589,11 @@ void ClientConnectionImpl::connect() {
     } else {
       immediate_error_event_ = ConnectionEvent::RemoteClose;
       connecting_ = false;
-<<<<<<< HEAD
+
       ENVOY_CONN_LOG(debug, "immediate connection error: {}", *this, errno);
 
       // Trigger a write event. This is needed on OSX and seems harmless on Linux.
       file_event_->activate(Event::FileReadyType::Write);
-=======
-      ENVOY_CONN_LOG(debug, "immediate connection error: {}", *this, errorno);
->>>>>>> 5aae90b1d... fixes for runtime issues
     }
   }
 

@@ -1,7 +1,9 @@
 #include "extensions/stat_sinks/statsd/config.h"
 
 #include "envoy/config/metrics/v2/stats.pb.h"
+#if !defined(DISABLE_PROTO_VALIDATE)
 #include "envoy/config/metrics/v2/stats.pb.validate.h"
+#endif
 #include "envoy/registry/registry.h"
 
 #include "common/network/resolver_impl.h"

@@ -395,8 +395,10 @@ Utility::protobufAddressToAddress(const envoy::api::v2::core::Address& proto_add
     return Network::Utility::parseInternetAddress(proto_address.socket_address().address(),
                                                   proto_address.socket_address().port_value(),
                                                   !proto_address.socket_address().ipv4_compat());
+#if !defined(WIN32)
   case envoy::api::v2::core::Address::kPipe:
     return std::make_shared<Address::PipeInstance>(proto_address.pipe().path());
+#endif
   default:
     NOT_REACHED;
   }

@@ -2,8 +2,10 @@
 
 #include <string>
 
+#if !defined(DISABLE_PROTO_VALIDATE)
 #include "envoy/api/v2/cds.pb.validate.h"
 #include "envoy/api/v2/cluster/outlier_detection.pb.validate.h"
+#endif
 
 #include "common/common/cleanup.h"
 #include "common/config/resources.h"

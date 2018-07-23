@@ -57,9 +57,13 @@ IoResult RawBufferSocket::doWrite(Buffer::Instance& buffer, bool end_stream) {
   do {
     if (buffer.length() == 0) {
       if (end_stream && !shutdown_) {
-        // Ignore the result. This can only fail if the connection failed. In that case, the
-        // error will be detected on the next read, and dealt with appropriately.
+      // Ignore the result. This can only fail if the connection failed. In that case, the
+      // error will be detected on the next read, and dealt with appropriately.
+#if !defined(WIN32)
         ::shutdown(callbacks_->fd(), SHUT_WR);
+#else
+        ::shutdown(callbacks_->fd(), SD_SEND);
+#endif
         shutdown_ = true;
       }
       action = PostIoAction::KeepOpen;

@@ -6,8 +6,11 @@
 #include <string>
 
 #include "envoy/admin/v2alpha/config_dump.pb.h"
+
+#if !defined(DISABLE_PROTO_VALIDATE)
 #include "envoy/api/v2/rds.pb.validate.h"
 #include "envoy/api/v2/route/route.pb.validate.h"
+#endif
 
 #include "common/common/assert.h"
 #include "common/common/fmt.h"
