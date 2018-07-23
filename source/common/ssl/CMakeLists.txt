@@ -1,6 +1,6 @@
 project(ssl)
 
-add_library(connection_lib_ssl connection_impl.cc)
+add_library(context_config_impl_lib context_config_impl.cc)
 
 add_library(context_config_lib context_config_impl.cc)
 

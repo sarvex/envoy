@@ -14,6 +14,10 @@
 #include "absl/strings/str_split.h"
 #include "fmt/format.h"
 
+#if defined(WIN32)
+#define FormatInt format_int
+#endif
+
 using Envoy::Config::Metadata;
 
 namespace Envoy {

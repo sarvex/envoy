@@ -31,7 +31,11 @@ ssize_t OsSysCallsImpl::write(int fd, const void* buffer, size_t num_bytes) {
 }
 
 ssize_t OsSysCallsImpl::recv(int socket, void* buffer, size_t length, int flags) {
+#if !defined(WIN32)
   return ::recv(socket, buffer, length, flags);
+#else
+  return ::recv(socket, (char *)buffer, length, flags);
+#endif
 }
 
 #if !defined(WIN32)
@@ -56,12 +60,20 @@ int OsSysCallsImpl::stat(const char* pathname, struct stat* buf) { return ::stat
 
 int OsSysCallsImpl::setsockopt(int sockfd, int level, int optname, const void* optval,
                                socklen_t optlen) {
+#if !defined(WIN32)
   return ::setsockopt(sockfd, level, optname, optval, optlen);
+#else
+  return ::setsockopt(sockfd, level, optname, (const char *)optval, optlen);
+#endif
 }
 
 int OsSysCallsImpl::getsockopt(int sockfd, int level, int optname, void* optval,
                                socklen_t* optlen) {
+#if !defined(WIN32)
   return ::getsockopt(sockfd, level, optname, optval, optlen);
+#else
+  return ::getsockopt(sockfd, level, optname, (char *)optval, optlen);
+#endif
 }
 
 } // namespace Api

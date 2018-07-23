@@ -18,12 +18,12 @@ target_link_libraries(envoy_main_common_lib PUBLIC
     config_http_grpc_web_lib    
     config_http_ip_tagging_lib
     config_http_ratelimit_lib
-    config_network_client_ssl_auth_lib
-    config_network_echo_lib  
-    config_network_http_connection_manager
-    config_network_mongo_proxy_lib
-    config_network_ratelimit_lib
-    config_network_redis_proxy_lib
+    network_client_ssl_auth_lib
+    network_echo_lib  
+    network_http_connection_manager
+    network_mongo_proxy_lib
+    network_ratelimit_lib
+    network_redis_proxy_lib
     health_check_lib
     )
 
@@ -137,7 +137,7 @@ target_link_libraries(
     address_lib
     runtime_lib
     uuid_util_lib
-    connection_lib_ssl
+    context_config_impl_lib
     context_config_lib
     context_lib
     watermark_buffer_lib
@@ -167,7 +167,7 @@ target_link_libraries(
     ratelimit_lib_filter
     health.lib                
     cares.lib
-	event.lib
+    event.lib
     event_core.lib
     event_extra.lib
     nghttp2.lib

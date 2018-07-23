@@ -5,6 +5,7 @@
 
 // NOLINT(namespace-envoy)
 
+#if !defined(WIN32)
 namespace fmt {
 
 // Provide an implementation of format_arg for fmt::format that allows absl::string_view to be
@@ -16,6 +17,6 @@ void format_arg(BasicFormatter<char, ArgFormatter>& f, const char*& format_str,
                 const absl::string_view sv) {
   BasicStringRef<char> str(sv.data(), sv.size());
   format_str = f.format(format_str, internal::MakeArg<BasicFormatter<char>>(str));
-}
-
 } // namespace fmt
+} // namespace fmt
+#endif

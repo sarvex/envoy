@@ -61,11 +61,19 @@ void BufferFilter::initConfig() {
   const std::string& name = HttpFilterNames::get().BUFFER;
   const auto* entry = callbacks_->route()->routeEntry();
 
+#if defined(WIN32)
+// msvc does not support the ternary operator with omitted middle operand
+  const auto* temp_route_local = entry->perFilterConfigTyped<BufferFilterSettings>(name);
+  const BufferFilterSettings* route_local =
+      temp_route_local
+          ? temp_route_local : entry->virtualHost().perFilterConfigTyped<BufferFilterSettings>(name);
+#else
   const BufferFilterSettings* route_local =
       entry->perFilterConfigTyped<BufferFilterSettings>(name)
           ?: entry->virtualHost().perFilterConfigTyped<BufferFilterSettings>(name);
+#endif
 
-  settings_ = route_local ?: settings_;
+  settings_ = route_local ? route_local : settings_;
 }
 
 Http::FilterHeadersStatus BufferFilter::decodeHeaders(Http::HeaderMap&, bool end_stream) {

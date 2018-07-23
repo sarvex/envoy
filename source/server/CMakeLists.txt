@@ -32,7 +32,5 @@ add_library(watchdog_lib watchdog_impl.cc)
 
 add_library(worker_lib worker_impl.cc)
 
-add_subdirectory(config/http)
-add_subdirectory(config/network)
 add_subdirectory(config_validation)
 add_subdirectory(http)

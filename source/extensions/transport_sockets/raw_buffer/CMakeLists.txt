@@ -1,0 +1,1 @@
+add_library(config_network_raw_buffer_lib OBJECT config.cc)

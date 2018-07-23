@@ -1,16 +1,22 @@
 setlocal 
 REM @echo off
 if "%1" == "" (
-    echo Usage: %~nx0 rootfolder-for-installing-dependencies
+    echo Usage: %~nx0 rootfolder-for-installing-dependencies envoy-repo-root
     exit /b 1
 )
 
+if "%2" == "" (
+    echo Usage: %~nx0 rootfolder-for-installing-dependencies envoy-repo-root
+    exit /b 1
+)
+
+set ENVOY_REPO_ROOT=%2
 set ENVOY_DEPENDENCY_ROOT=%1
 if not exist %ENVOY_DEPENDENCY_ROOT% mkdir %ENVOY_DEPENDENCY_ROOT%
 pushd %ENVOY_DEPENDENCY_ROOT%
 
-set PROTOC=%ENVOY_DEPENDENCY_ROOT%\vcpkg\installed\x64-windows-static\tools\protoc.exe
-set PROTOC_FLAGS= --proto_path=%ENVOY_DEPENDENCY_ROOT%\vcpkg\installed\x64-windows-static\include\google\protobuf
+set PROTOC=%ENVOY_DEPENDENCY_ROOT%\vcpkg\installed\x64-windows-static\tools\protobuf\protoc.exe
+set PROTOC_FLAGS= --proto_path=%ENVOY_DEPENDENCY_ROOT%\vcpkg\installed\x64-windows-static\include
 set PROTOC_OUTPUT=%ENVOY_DEPENDENCY_ROOT%\gens
 set INCLUDE=%INCLUDE%;%ENVOY_DEPENDENCY_ROOT%\vcpkg\installed\x64-windows-static\include
 if not exist %PROTOC_OUTPUT% mkdir %PROTOC_OUTPUT%
@@ -26,6 +32,7 @@ cd vcpkg
 call .\bootstrap-vcpkg.bat
 vcpkg install --triplet x64-windows-static abseil c-ares grpc http-parser libevent spdlog xxhash tclap rapidjson yaml-cpp
 vcpkg install --triplet x64-windows nghttp2
+vcpkg install --triplet x64-windows fmt
 
 @echo on
 
@@ -108,7 +115,7 @@ if not exist %current_directory% (
 )
 cd %current_directory%
 git fetch
-git checkout 6cd364a
+git checkout 9f600c2cd2d7031fdc8e25e1c9f5ad81c8cab4fe
 %PROTOC% %PROTOC_FLAGS% --proto_path=. --cpp_out=%PROTOC_OUTPUT%\%current_directory% validate\validate.proto
 cl /nologo /c /EHsc /I %PROTOC_OUTPUT%\%current_directory% /D_DEBUG %PROTOC_OUTPUT%\%current_directory%\validate\validate.pb.cc /Fo:%PROTOC_OUTPUT%\%current_directory%\debug\
 lib /nologo /out:%PROTOC_OUTPUT%\lib\debug\%current_directory%.lib %PROTOC_OUTPUT%\%current_directory%\debug\validate.pb.obj
@@ -127,7 +134,7 @@ if not exist %current_directory% (
 )
 cd %current_directory%
 git fetch
-git checkout 26de2f9
+git checkout 1adfc126b41513cc696b209667c8656ea7aac67c
 %PROTOC% %PROTOC_FLAGS% --proto_path=. --cpp_out=%PROTOC_OUTPUT%\%current_directory% gogoproto\gogo.proto
 cl /nologo /c /EHsc /I %PROTOC_OUTPUT%\%current_directory% /D_DEBUG %PROTOC_OUTPUT%\%current_directory%\gogoproto\gogo.pb.cc /Fo:%PROTOC_OUTPUT%\%current_directory%\debug\
 lib /nologo /out:%PROTOC_OUTPUT%\lib\debug\%current_directory%.lib %PROTOC_OUTPUT%\%current_directory%\debug\gogo.pb.obj
@@ -145,8 +152,11 @@ if not exist %current_directory% (
     git clone https://github.com/googleapis/googleapis.git
 )
 cd %current_directory%
-git checkout 62273f2
+git checkout 5c6df0cd18c6a429eab739fb711c27f6e1393366
 for /R %%i in (google\api\*.proto) do (
+    %PROTOC% %PROTOC_FLAGS% --proto_path=%cd% --cpp_out=%PROTOC_OUTPUT%\%current_directory% "%%i"
+)
+for /R %%i in (google\rpc\*.proto) do (
     %PROTOC% %PROTOC_FLAGS% --proto_path=%cd% --cpp_out=%PROTOC_OUTPUT%\%current_directory% "%%i"
 )
 cl /nologo /c /EHsc /I %PROTOC_OUTPUT%\%current_directory% /D_DEBUG %PROTOC_OUTPUT%\%current_directory%\google\api\annotations.pb.cc %PROTOC_OUTPUT%\%current_directory%\google\api\http.pb.cc /Fo:%PROTOC_OUTPUT%\%current_directory%\debug\
@@ -165,9 +175,7 @@ if not exist %PROTOC_OUTPUT%\%current_directory%\release mkdir %PROTOC_OUTPUT%\%
 if not exist %current_directory% (
     git clone https://github.com/envoyproxy/data-plane-api.git
 )
-cd %current_directory%
-git fetch
-git checkout 5aa0208
+cd %ENVOY_REPO_ROOT%\api
 for /R %%i in (*.proto) do (
     %PROTOC% %PROTOC_FLAGS% ^
         --proto_path=%cd% ^
@@ -212,8 +220,8 @@ set current_directory=health
 if not exist %PROTOC_OUTPUT%\%current_directory%\debug mkdir %PROTOC_OUTPUT%\%current_directory%\debug
 if not exist %PROTOC_OUTPUT%\%current_directory%\release mkdir %PROTOC_OUTPUT%\%current_directory%\release
 %PROTOC% %PROTOC_FLAGS% ^
-    --proto_path=%ENVOY_DEPENDENCY_ROOT%\vcpkg\buildtrees\grpc\src\grpc-1.8.3\src\proto\grpc\health\v1 ^
-    %ENVOY_DEPENDENCY_ROOT%\vcpkg\buildtrees\grpc\src\grpc-1.8.3\src\proto\grpc\health\v1\health.proto ^
+    --proto_path=%ENVOY_DEPENDENCY_ROOT%\vcpkg\buildtrees\grpc\src\v1.12.0-73cc223062\src\proto\grpc\health\v1 ^
+    %ENVOY_DEPENDENCY_ROOT%\vcpkg\buildtrees\grpc\src\v1.12.0-73cc223062\src\proto\grpc\health\v1\health.proto ^
     --cpp_out=%PROTOC_OUTPUT%\%current_directory%
 cl /nologo /c /EHsc /I %PROTOC_OUTPUT%\%current_directory% /D_DEBUG %PROTOC_OUTPUT%\%current_directory%\health.pb.cc /Fo:%PROTOC_OUTPUT%\%current_directory%\debug\ /I %PROTOC_OUTPUT%\%current_directory%
 lib /nologo /out:%PROTOC_OUTPUT%\lib\debug\%current_directory%.lib %PROTOC_OUTPUT%\%current_directory%\debug\health.pb.obj

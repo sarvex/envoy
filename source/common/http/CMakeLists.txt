@@ -1,6 +1,5 @@
 project(http)
 
-add_subdirectory(filter)
 add_subdirectory(http1)
 add_subdirectory(http2)
 add_subdirectory(websocket)

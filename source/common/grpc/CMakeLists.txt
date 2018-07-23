@@ -14,14 +14,10 @@ target_link_libraries(codec_lib PUBLIC
 
 add_library(common_lib common.cc)
 
-add_library(http1_bridge_filter_lib http1_bridge_filter.cc)
-
 #add_library(
 #json_transcoder_filter_lib
 #json_transcoder_filter.cc
 #)
-
-add_library(grpc_web_filter_lib grpc_web_filter.cc)
 
 #add_library(rpc_channel_lib rpc_channel_impl.cc)
 

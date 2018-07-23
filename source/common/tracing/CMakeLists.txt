@@ -6,5 +6,3 @@ add_library(http_tracer_lib http_tracer_impl.cc)
 #lightstep_tracer_lib
 #lightstep_tracer_impl.cc
 #)
-
-add_subdirectory(zipkin)
