@@ -32,5 +32,7 @@ add_library(watchdog_lib watchdog_impl.cc)
 
 add_library(worker_lib worker_impl.cc)
 
+add_library(proto_descriptors_lib proto_descriptors.cc)
+
 add_subdirectory(config_validation)
 add_subdirectory(http)

@@ -1,5 +1,6 @@
 #include "server/proto_descriptors.h"
 
+#if !defined(_WIN32)
 #include "envoy/api/v2/cds.pb.h"
 #include "envoy/api/v2/eds.pb.h"
 #include "envoy/api/v2/lds.pb.h"
@@ -9,6 +10,7 @@
 #include "envoy/service/discovery/v2/hds.pb.h"
 #include "envoy/service/metrics/v2/metrics_service.pb.h"
 #include "envoy/service/ratelimit/v2/rls.pb.h"
+#endif
 
 #include "common/common/fmt.h"
 #include "common/config/protobuf_link_hacks.h"
@@ -18,6 +20,8 @@ namespace Envoy {
 namespace Server {
 
 bool validateProtoDescriptors() {
+#if !defined(_WIN32)
+
   const auto methods = {
       "envoy.api.v2.ClusterDiscoveryService.FetchClusters",
       "envoy.api.v2.ClusterDiscoveryService.StreamClusters",
@@ -53,6 +57,7 @@ bool validateProtoDescriptors() {
       return false;
     }
   }
+#endif
   return true;
 };
 } // namespace Server

@@ -11,7 +11,15 @@ add_library(load_stats_reporter_lib load_stats_reporter.cc)
 
 add_library(original_dst_cluster_lib original_dst_cluster.cc)
 
+add_library(maglev_lb_lib maglev_lb.cc)
+
+add_library(thread_aware_lb_impl_lib thread_aware_lb_impl.cc)
+
 add_library(subset_lb_lib subset_lb.cc)
+target_link_libraries(subset_lb_lib PUBLIC 
+	maglev_lb_lib
+	thread_aware_lb_impl_lib
+)
 
 add_library(cluster_manager_lib cluster_manager_impl.cc)
 target_link_libraries(cluster_manager_lib PUBLIC 

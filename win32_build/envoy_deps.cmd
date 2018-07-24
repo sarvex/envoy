@@ -76,6 +76,7 @@ if not exist %current_directory% (
 cd %current_directory%\src
 git fetch
 git checkout 5f48a3b549b047732f2d865a09e5aee872600854
+git apply %~dp0circllhist.patch
 cl /nologo /c /DWIN32 /D_DEBUG circllhist.c /Fo:%ENVOY_DEPENDENCY_ROOT%\%current_directory%\debug\
 lib /nologo /out:%ENVOY_DEPENDENCY_ROOT%\%current_directory%\debug\%current_directory%.lib %ENVOY_DEPENDENCY_ROOT%\%current_directory%\debug\circllhist.obj
 cl /nologo /c /DWIN32 /DNDEBUG /Osx circllhist.c /Fo:%ENVOY_DEPENDENCY_ROOT%\%current_directory%\release\
@@ -179,10 +180,10 @@ for /R %%i in (google\api\*.proto) do (
 for /R %%i in (google\rpc\*.proto) do (
     %PROTOC% %PROTOC_FLAGS% --proto_path=%cd% --cpp_out=%PROTOC_OUTPUT%\%current_directory% "%%i"
 )
-cl /nologo /c /EHsc /I %PROTOC_OUTPUT%\%current_directory% /D_DEBUG %PROTOC_OUTPUT%\%current_directory%\google\api\annotations.pb.cc %PROTOC_OUTPUT%\%current_directory%\google\api\http.pb.cc /Fo:%PROTOC_OUTPUT%\%current_directory%\debug\
-lib /nologo /out:%PROTOC_OUTPUT%\lib\debug\%current_directory%.lib %PROTOC_OUTPUT%\%current_directory%\debug\annotations.pb.obj %PROTOC_OUTPUT%\%current_directory%\debug\http.pb.obj
-cl /nologo /c /EHsc /I %PROTOC_OUTPUT%\%current_directory% /DNDEBUG /Osx %PROTOC_OUTPUT%\%current_directory%\google\api\annotations.pb.cc %PROTOC_OUTPUT%\%current_directory%\google\api\http.pb.cc /Fo:%PROTOC_OUTPUT%\%current_directory%\release\
-lib /nologo /out:%PROTOC_OUTPUT%\lib\%current_directory%.lib %PROTOC_OUTPUT%\%current_directory%\release\annotations.pb.obj %PROTOC_OUTPUT%\%current_directory%\release\http.pb.obj
+cl /nologo /c /EHsc /I %PROTOC_OUTPUT%\%current_directory% /D_DEBUG %PROTOC_OUTPUT%\%current_directory%\google\api\annotations.pb.cc %PROTOC_OUTPUT%\%current_directory%\google\api\http.pb.cc %PROTOC_OUTPUT%\%current_directory%\google\rpc\status.pb.cc /Fo:%PROTOC_OUTPUT%\%current_directory%\debug\
+lib /nologo /out:%PROTOC_OUTPUT%\lib\debug\%current_directory%.lib %PROTOC_OUTPUT%\%current_directory%\debug\annotations.pb.obj %PROTOC_OUTPUT%\%current_directory%\debug\http.pb.obj %PROTOC_OUTPUT%\%current_directory%\debug\status.pb.obj
+cl /nologo /c /EHsc /I %PROTOC_OUTPUT%\%current_directory% /DNDEBUG /Osx %PROTOC_OUTPUT%\%current_directory%\google\api\annotations.pb.cc %PROTOC_OUTPUT%\%current_directory%\google\api\http.pb.cc %PROTOC_OUTPUT%\%current_directory%\google\rpc\status.pb.cc /Fo:%PROTOC_OUTPUT%\%current_directory%\release\
+lib /nologo /out:%PROTOC_OUTPUT%\lib\%current_directory%.lib %PROTOC_OUTPUT%\%current_directory%\release\annotations.pb.obj %PROTOC_OUTPUT%\%current_directory%\release\http.pb.obj %PROTOC_OUTPUT%\%current_directory%\release\status.pb.obj
 set GOOGLE_APIS_PROTO=%cd%
 
 

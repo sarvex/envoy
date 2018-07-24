@@ -73,6 +73,7 @@ target_link_libraries(
     listener_manager_lib
     watchdog_lib
     worker_lib
+	proto_descriptors_lib
     
     buffer_filter_lib
     config_lib_router
@@ -93,7 +94,9 @@ target_link_libraries(
     user_agent_lib
     http_utility_lib
     filter_utility_lib
+	header_utility_lib
     admin_lib
+	config_tracker_lib
     common_lib
     http_tracer_lib
     #zipkin_lib
@@ -159,6 +162,8 @@ target_link_libraries(
     common_grpc_async_client_manager_lib
     common_ssl_ssl_socket_lib
     common_network_raw_buffer_socket_lib
+	token_bucket_lib
+	logger_delegates_lib
     fault_filter_lib
     grpc_web_filter_lib
     http1_bridge_filter_lib
@@ -166,6 +171,7 @@ target_link_libraries(
     ip_tagging_filter_lib
 	socket_option_factory_lib
     #ratelimit_lib_filter
+	ext_file_access_log_lib
     health.lib                
     cares.lib
     event.lib
@@ -178,6 +184,7 @@ target_link_libraries(
     Rpcrt4.lib
     protoc-gen-validate.lib
     gogoproto.lib
+	circllhist.lib
 )
 
 target_link_libraries(envoy
@@ -196,11 +203,20 @@ target_link_libraries(envoy
 target_link_libraries(envoy 
     debug absl_based.lib
     debug absl_stringsd.lib
+    debug absl_debuggingd.lib
+    debug absl_numericd.lib
+	debug absl_synchronizationd.lib
+	debug absl_timed.lib
 )
 
 target_link_libraries(envoy 
     optimized absl_base.lib
+    optimized absl_debugging.lib
+    optimized absl_numeric.lib
     optimized absl_strings.lib
+	optimized absl_synchronization.lib
+	optimized absl_types.lib
+	optimized absl_time.lib
 )
 
 target_link_libraries(envoy 

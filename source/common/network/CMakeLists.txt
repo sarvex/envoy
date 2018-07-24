@@ -22,4 +22,13 @@ add_library(resolver_impl_lib resolver_impl.cc)
 
 add_library(network_utility_lib utility.cc)
 
+add_library(socket_option_lib socket_option_impl.cc)
+
+add_library(addr_family_aware_socket_option_lib addr_family_aware_socket_option_impl.cc)
+
 add_library(socket_option_factory_lib socket_option_factory.cc)
+target_link_libraries(socket_option_factory_lib PUBLIC 
+    socket_option_lib
+	addr_family_aware_socket_option_lib
+)
+
