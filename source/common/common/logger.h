@@ -9,6 +9,7 @@
 
 #include "common/common/fmt.h"
 #include "common/common/macros.h"
+#include "common/common/non_copyable.h"
 
 #include "absl/strings/string_view.h"
 #include "fmt/ostream.h"
@@ -25,26 +26,28 @@ namespace Logger {
   FUNCTION(client)               \
   FUNCTION(config)               \
   FUNCTION(connection)           \
-  FUNCTION(misc)                 \
   FUNCTION(file)                 \
   FUNCTION(filter)               \
+  FUNCTION(grpc)                 \
   FUNCTION(hc)                   \
   FUNCTION(health_checker)       \
   FUNCTION(http)                 \
   FUNCTION(http2)                \
+  FUNCTION(hystrix)              \
   FUNCTION(lua)                  \
   FUNCTION(main)                 \
+  FUNCTION(misc)                 \
   FUNCTION(mongo)                \
   FUNCTION(pool)                 \
+  FUNCTION(rbac)                 \
   FUNCTION(redis)                \
   FUNCTION(router)               \
   FUNCTION(runtime)              \
+  FUNCTION(stats)                \
   FUNCTION(testing)              \
+  FUNCTION(thrift)               \
   FUNCTION(tracing)              \
-  FUNCTION(upstream)             \
-  FUNCTION(grpc)                 \
-  FUNCTION(stats)
-
+  FUNCTION(upstream)
 
 enum class Id {
   ALL_LOGGER_IDS(GENERATE_ENUM)
@@ -94,7 +97,7 @@ typedef std::shared_ptr<DelegatingLogSink> DelegatingLogSinkPtr;
  * On destruction, logging is reverted to its previous state. SinkDelegates must
  * be allocated/freed as a stack.
  */
-class SinkDelegate {
+class SinkDelegate : NonCopyable {
 public:
   explicit SinkDelegate(DelegatingLogSinkPtr log_sink);
   virtual ~SinkDelegate();

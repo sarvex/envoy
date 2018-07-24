@@ -34,7 +34,9 @@ On Ubuntu, run the following commands:
  apt-get install cmake
  apt-get install realpath
  apt-get install clang-format-5.0
+ apt-get install autoconf
  apt-get install automake
+ apt-get install pkg-config
 ```
 
 On Fedora (maybe also other red hat distros), run the following:
@@ -50,7 +52,9 @@ brew install cmake
 brew install libtool
 brew install go
 brew install bazel
+brew install autoconf
 brew install automake
+brew install pkg-config
 ```
 
 Envoy compiles and passes tests with the version of clang installed by XCode 9.3.0:
@@ -59,8 +63,7 @@ Apple LLVM version 9.1.0 (clang-902.0.30).
 3. Install Golang on your machine. This is required as part of building [BoringSSL](https://boringssl.googlesource.com/boringssl/+/HEAD/BUILDING.md)
 and also for [Buildifer](https://github.com/bazelbuild/buildtools) which is used for formatting bazel BUILD files.
 4. `go get github.com/bazelbuild/buildtools/buildifier` to install buildifier
-5. `bazel fetch //source/...` to fetch and build all external dependencies. This may take some time.
-6. `bazel build //source/exe:envoy-static` from the Envoy source directory.
+5. `bazel build //source/exe:envoy-static` from the Envoy source directory.
 
 ## Building Bazel with the CI Docker image
 
@@ -160,11 +163,13 @@ bazel test //test/common/http:async_client_impl_test --strategy=TestRunner=stand
 # Stack trace symbol resolution
 
 Envoy can produce backtraces on demand and from assertions and other fatal
-actions like segfaults. The stack traces written in the log or to stderr contain
-addresses rather than resolved symbols. The `tools/stack_decode.py` script exists
-to process the output and do symbol resolution to make the stack traces useful. Any
-log lines not relevant to the backtrace capability are passed through the script unchanged
-(it acts like a filter).
+actions like segfaults. Where supported, stack traces will contain resolved
+symbols, though not include line numbers. On systems where absl::Symbolization is
+not supported, the stack traces written in the log or to stderr contain addresses rather
+than resolved symbols. The `tools/stack_decode.py` script exists to process the output
+and do symbol resolution including line numbers, to make the stack traces useful.
+Any log lines not relevant to the backtrace capability
+are passed through the script unchanged (it acts like a filter).
 
 The script runs in one of two modes. If passed no arguments it anticipates
 Envoy (or test) output on stdin. You can postprocess a log or pipe the output of
@@ -351,6 +356,14 @@ then log back in and it should start working.
 
 The latest coverage report for master is available
 [here](https://s3.amazonaws.com/lyft-envoy/coverage/report-master/coverage.html).
+
+It's also possible to specialize the coverage build to a single test target. This is useful
+when doing things like exploring the coverage of a fuzzer over its corpus. This can be done with
+the `COVERAGE_TARGET` and `VALIDATE_COVERAGE` environment variables, e.g.:
+
+```
+COVERAGE_TARGET=//test/common/common:base64_fuzz_test VALIDATE_COVERAGE=false test/run_envoy_bazel_coverage.sh
+```
 
 # Cleaning the build and test artifacts
 

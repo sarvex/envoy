@@ -29,6 +29,8 @@ are noted.
 
 The following command operators are supported:
 
+.. _config_access_log_format_start_time:
+
 %START_TIME%
   HTTP
     Request start time including milliseconds.
@@ -36,11 +38,33 @@ The following command operators are supported:
   TCP
     Downstream connection start time including milliseconds.
 
-  START_TIME can be customized using a `format string <http://en.cppreference.com/w/cpp/io/manip/put_time>`_, for example:
+  START_TIME can be customized using a `format string <http://en.cppreference.com/w/cpp/io/manip/put_time>`_.
+  In addition to that, START_TIME also accepts following specifiers:
 
-.. code-block:: none
+  +------------------------+-------------------------------------------------------------+
+  | Specifier              | Explanation                                                 |
+  +========================+=============================================================+
+  | ``%s``                 | The number of seconds since the Epoch                       |
+  +------------------------+-------------------------------------------------------------+
+  | ``%f``, ``%[1-9]f``    | Fractional seconds digits, default is 9 digits (nanosecond) |
+  |                        +-------------------------------------------------------------+
+  |                        | - ``%3f`` millisecond (3 digits)                            |
+  |                        | - ``%6f`` microsecond (6 digits)                            |
+  |                        | - ``%9f`` nanosecond (9 digits)                             |
+  +------------------------+-------------------------------------------------------------+
 
-  %START_TIME(%Y/%m/%dT%H:%M:%S%z %s)%
+  Examples of formatting START_TIME is as follows:
+
+  .. code-block:: none
+
+    %START_TIME(%Y/%m/%dT%H:%M:%S%z %s)%
+
+    # To include millisecond fraction of the second (.000 ... .999). E.g. 1527590590.528.
+    %START_TIME(%s.%3f)%
+
+    %START_TIME(%s.%6f)%
+
+    %START_TIME(%s.%9f)%
 
 %BYTES_RECEIVED%
   HTTP
@@ -66,7 +90,7 @@ The following command operators are supported:
 
 %BYTES_SENT%
   HTTP
-    Body bytes sent.
+    Body bytes sent. For WebSocket connection it will also include response header bytes.
 
   TCP
     Downstream bytes sent on connection.
@@ -77,6 +101,16 @@ The following command operators are supported:
 
   TCP
     Total duration in milliseconds of the downstream connection.
+
+%RESPONSE_DURATION%
+  HTTP
+    Total duration in milliseconds of the request from the start time to the first byte read from the
+    upstream host.
+
+  TCP
+    Not implemented ("-").
+
+.. _config_access_log_format_response_flags:
 
 %RESPONSE_FLAGS%
   Additional details about the response or connection, if any. For TCP connections, the response codes mentioned in
@@ -96,6 +130,14 @@ The following command operators are supported:
     * **DI**: The request processing was delayed for a period specified via :ref:`fault injection <config_http_filters_fault_injection>`.
     * **FI**: The request was aborted with a response code specified via :ref:`fault injection <config_http_filters_fault_injection>`.
     * **RL**: The request was ratelimited locally by the :ref:`HTTP rate limit filter <config_http_filters_rate_limit>` in addition to 429 response code.
+
+%RESPONSE_TX_DURATION%
+  HTTP
+    Total duration in milliseconds of the request from the first byte read from the upstream host to the last
+    byte sent downstream.
+
+  TCP
+    Not implemented ("-").
 
 %UPSTREAM_HOST%
   Upstream host URL (e.g., tcp://ip:port for TCP connections).

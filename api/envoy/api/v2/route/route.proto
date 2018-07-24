@@ -282,9 +282,17 @@ message RouteMatch {
   repeated QueryParameterMatcher query_parameters = 7;
 }
 
+// [#comment:next free field: 9]
 message CorsPolicy {
   // Specifies the origins that will be allowed to do CORS requests.
+  //
+  // An origin is allowed if either allow_origin or allow_origin_regex match.
   repeated string allow_origin = 1;
+
+  // Specifies regex patterns that match allowed origins.
+  //
+  // An origin is allowed if either allow_origin or allow_origin_regex match.
+  repeated string allow_origin_regex = 8;
 
   // Specifies the content for the *access-control-allow-methods* header.
   string allow_methods = 2;
@@ -305,7 +313,7 @@ message CorsPolicy {
   google.protobuf.BoolValue enabled = 7;
 }
 
-// [#comment:next free field: 23]
+// [#comment:next free field: 25]
 message RouteAction {
   oneof cluster_specifier {
     option (validate.required) = true;
@@ -353,7 +361,9 @@ message RouteAction {
 
   // Indicates that during forwarding, the matched prefix (or path) should be
   // swapped with this value. This option allows application URLs to be rooted
-  // at a different path from those exposed at the reverse proxy layer.
+  // at a different path from those exposed at the reverse proxy layer. The router filter will
+  // place the original path before rewrite into the :ref:`x-envoy-original-path
+  // <config_http_filters_router_x-envoy-original-path>` header.
   //
   // .. attention::
   //
@@ -391,7 +401,9 @@ message RouteAction {
     google.protobuf.BoolValue auto_host_rewrite = 7;
   }
 
-  // Specifies the timeout for the route. If not specified, the default is 15s.
+  // Specifies the upstream timeout for the route. If not specified, the default is 15s. This
+  // spans between the point at which the entire downstream request (i.e. end-of-stream) has been
+  // processed and when the upstream response has been completely processed.
   //
   // .. note::
   //
@@ -413,8 +425,8 @@ message RouteAction {
     // :ref:`config_http_filters_router_x-envoy-max-retries`.
     google.protobuf.UInt32Value num_retries = 2;
 
-    // Specifies a non-zero timeout per retry attempt. This parameter is optional.
-    // The same conditions documented for
+    // Specifies a non-zero upstream timeout per retry attempt. This parameter is optional. The
+    // same conditions documented for
     // :ref:`config_http_filters_router_x-envoy-upstream-rq-per-try-timeout-ms` apply.
     //
     // .. note::
@@ -426,6 +438,27 @@ message RouteAction {
     //   would have been exhausted.
     google.protobuf.Duration per_try_timeout = 3 [(gogoproto.stdduration) = true];
   }
+
+  // Specifies the idle timeout for the route. If not specified, there is no per-route idle timeout
+  // specified, although the connection manager wide :ref:`stream_idle_timeout
+  // <envoy_api_field_config.filter.network.http_connection_manager.v2.HttpConnectionManager.stream_idle_timeout>`
+  // will still apply. A value of 0 will completely disable the route's idle timeout, even if a
+  // connection manager stream idle timeout is configured.
+  //
+  // The idle timeout is distinct to :ref:`timeout
+  // <envoy_api_field_route.RouteAction.timeout>`, which provides an upper bound
+  // on the upstream response time; :ref:`idle_timeout
+  // <envoy_api_field_route.RouteAction.idle_timeout>` instead bounds the amount
+  // of time the request's stream may be idle.
+  //
+  // After header decoding, the idle timeout will apply on downstream and
+  // upstream request events. Each time an encode/decode event for headers or
+  // data is processed for the stream, the timer will be reset. If the timeout
+  // fires, the stream is terminated with a 408 Request Timeout error code if no
+  // upstream response header has been received, otherwise a stream reset
+  // occurs.
+  google.protobuf.Duration idle_timeout = 24
+      [(validate.rules).duration.gt = {}, (gogoproto.stdduration) = true];
 
   // Indicates that the route has a retry policy.
   RetryPolicy retry_policy = 9;
@@ -519,8 +552,13 @@ message RouteAction {
       string name = 1 [(validate.rules).string.min_bytes = 1];
 
       // If specified, a cookie with the TTL will be generated if the cookie is
-      // not present.
+      // not present. If the TTL is present and zero, the generated cookie will
+      // be a session cookie.
       google.protobuf.Duration ttl = 2 [(gogoproto.stdduration) = true];
+
+      // The name of the path for the cookie. If no path is specified here, no path
+      // will be set for the cookie.
+      string path = 3;
     }
 
     message ConnectionProperties {
@@ -566,26 +604,28 @@ message RouteAction {
   //   proxy data from the client to the upstream server.
   //
   //   Redirects are not supported on routes where WebSocket upgrades are allowed.
-  google.protobuf.BoolValue use_websocket = 16;
+  google.protobuf.BoolValue use_websocket = 16 [deprecated = true];
 
   message WebSocketProxyConfig {
-    // See :ref:`stat_prefix <envoy_api_field_config.filter.network.tcp_proxy.v2.TcpProxy.stat_prefix>`.
-    // If the parameter is not specified, the default value of "websocket" is used.
+    // See :ref:`stat_prefix
+    // <envoy_api_field_config.filter.network.tcp_proxy.v2.TcpProxy.stat_prefix>`. If the parameter
+    // is not specified, the default value of "websocket" is used.
     //
     // WebSocket connections support the :ref:`downstream statistics
-    // <config_network_filters_tcp_proxy_stats>` for TCP proxy, except for the following, which are reported
-    // in the :ref:`HTTP Connection Manager statistics <config_http_conn_man_stats>`:
+    // <config_network_filters_tcp_proxy_stats>` for TCP proxy, except for the following, which are
+    // reported in the :ref:`HTTP Connection Manager statistics <config_http_conn_man_stats>`:
     // - downstream_cx_tx_bytes_total
     // - downstream_cx_tx_bytes_buffered
     // - downstream_cx_rx_bytes_total
     // - downstream_cx_rx_bytes_buffered
     string stat_prefix = 1;
 
-    // See :ref:`idle_timeout <envoy_api_field_config.filter.network.tcp_proxy.v2.TcpProxy.idle_timeout>`.
-    // This timeout is only in effect after the WebSocket upgrade request is received by Envoy. It does
-    // not cover the initial part of the HTTP request.
+    // See :ref:`idle_timeout
+    // <envoy_api_field_config.filter.network.tcp_proxy.v2.TcpProxy.idle_timeout>`. This timeout is
+    // only in effect after the WebSocket upgrade request is received by Envoy. It does not cover
+    // the initial part of the HTTP request.
     google.protobuf.Duration idle_timeout = 2
-      [(validate.rules).duration.gt = {}, (gogoproto.stdduration) = true];
+        [(validate.rules).duration.gt = {}, (gogoproto.stdduration) = true];
 
     // See :ref:`max_connect_attempts
     // <envoy_api_field_config.filter.network.tcp_proxy.v2.TcpProxy.max_connect_attempts>`.
@@ -594,12 +634,24 @@ message RouteAction {
 
   // Proxy configuration used for WebSocket connections. If unset, the default values as specified
   // in :ref:`TcpProxy <envoy_api_msg_config.filter.network.tcp_proxy.v2.TcpProxy>` are used.
-  WebSocketProxyConfig websocket_config = 22;
+  WebSocketProxyConfig websocket_config = 22 [deprecated = true];
 
   // Indicates that the route has a CORS policy.
   CorsPolicy cors = 17;
 
   reserved 21;
+
+  // If present, and the request is a gRPC request, use the
+  // `grpc-timeout header <https://github.com/grpc/grpc/blob/master/doc/PROTOCOL-HTTP2.md>`_,
+  // or its default value (infinity) instead of
+  // :ref:`timeout <envoy_api_field_route.RouteAction.timeout>`, but limit the applied timeout
+  // to the maximum value specified here. If configured as 0, the maximum allowed timeout for
+  // gRPC requests is infinity. If not configured at all, the `grpc-timeout` header is not used
+  // and gRPC requests time out like any other requests using
+  // :ref:`timeout <envoy_api_field_route.RouteAction.timeout>` or its default.
+  // This can be used to prevent unexpected upstream request timeouts due to potentially long
+  // time gaps between gRPC request and response in gRPC streaming mode.
+  google.protobuf.Duration max_grpc_timeout = 23 [(gogoproto.stdduration) = true];
 }
 
 message RedirectAction {
@@ -867,31 +919,24 @@ message RateLimit {
 //       "name": ":method",
 //       "value": "POST"
 //     }
+//
+// .. attention::
+//   In the absence of any header match specifier, match will default to :ref:`present_match
+//   <envoy_api_field_route.HeaderMatcher.present_match>`. i.e, a request that has the :ref:`name
+//   <envoy_api_field_route.HeaderMatcher.name>` header will match, regardless of the header's
+//   value.
+//
 message HeaderMatcher {
   // Specifies the name of the header in the request.
   string name = 1 [(validate.rules).string.min_bytes = 1];
 
-  // Specifies the value of the header. If the value is absent a request that
-  // has the name header will match, regardless of the header’s value.
-  string value = 2;
+  reserved 2; // value deprecated by :ref:`exact_match
+              // <envoy_api_field_route.HeaderMatcher.exact_match>`
 
-  // Specifies whether the header value is a regular
-  // expression or not. Defaults to false. The entire request header value must match the regex. The
-  // rule will not match if only a subsequence of the request header value matches the regex. The
-  // regex grammar used in the value field is defined
-  // `here <http://en.cppreference.com/w/cpp/regex/ecmascript>`_.
-  //
-  // Examples:
-  //
-  // * The regex *\d{3}* matches the value *123*
-  // * The regex *\d{3}* does not match the value *1234*
-  // * The regex *\d{3}* does not match the value *123.456*
-  google.protobuf.BoolValue regex = 3;
+  reserved 3; // regex deprecated by :ref:`regex_match
+              // <envoy_api_field_route.HeaderMatcher.regex_match>`
 
   // Specifies how the header match will be performed to route the request.
-  // If header_match_specifier is absent, a request that has the
-  // :ref:`envoy_api_msg_route.HeaderMatcher.name` header will match, regardless of the header's
-  // value.
   oneof header_match_specifier {
     // If specified, header match will be performed based on the value of the header.
     string exact_match = 4;
@@ -920,7 +965,35 @@ message HeaderMatcher {
     // * For range [-10,0), route will match for header value -1, but not for 0, "somestring", 10.9,
     //   "-1somestring"
     envoy.type.Int64Range range_match = 6;
+
+    // If specified, header match will be be performed based on whether the header is in the
+    // request.
+    bool present_match = 7;
+
+    // If specified, header match will be performed based on the prefix of the header value.
+    // Note: empty prefix is not allowed, please use present_match instead.
+    //
+    // Examples:
+    //
+    // * The prefix *abcd* matches the value *abcdxyz*, but not for *abcxyz*.
+    string prefix_match = 9 [(validate.rules).string.min_bytes = 1];
+
+    // If specified, header match will be performed based on the suffix of the header value.
+    // Note: empty suffix is not allowed, please use present_match instead.
+    //
+    // Examples:
+    //
+    // * The suffix *abcd* matches the value *xyzabcd*, but not for *xyzbcd*.
+    string suffix_match = 10 [(validate.rules).string.min_bytes = 1];
   }
+
+  // If specified, the match result will be inverted before checking. Defaults to false.
+  //
+  // Examples:
+  //
+  // * The regex *\d{3}* does not match the value *1234*, so it will match when inverted.
+  // * The range [-10,0) will match the value -1, so it will not match when inverted.
+  bool invert_match = 8;
 }
 
 // Query parameter matching treats the query string of a request's :path header

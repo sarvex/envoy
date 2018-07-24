@@ -25,12 +25,12 @@ public:
       ENVOY_LOG_MISC(debug, "Processing event: {}", event.DebugString());
       // If we're disconnected, we fail out.
       if (!tcp_client->connected()) {
-        EXPECT_TRUE(tcp_client->connected());
+        ENVOY_LOG_MISC(debug, "Disconnected, no further event processing.");
         break;
       }
       switch (event.event_selector_case()) {
       case test::integration::Event::kDownstreamSendBytes:
-        tcp_client->write(event.downstream_send_bytes());
+        tcp_client->write(event.downstream_send_bytes(), false, false);
         break;
       case test::integration::Event::kDownstreamRecvBytes:
         // TODO(htuch): Should we wait for some data?
@@ -40,10 +40,14 @@ public:
           fake_upstream_connection = fake_upstreams_[0]->waitForRawConnection(max_wait_ms_);
           // If we timed out, we fail out.
           if (fake_upstream_connection == nullptr) {
-            EXPECT_NE(nullptr, fake_upstream_connection);
             tcp_client->close();
             return;
           }
+        }
+        // If we're no longer connected, we're done.
+        if (!fake_upstream_connection->connected()) {
+          tcp_client->close();
+          return;
         }
         fake_upstream_connection->write(event.upstream_send_bytes());
         break;
@@ -56,7 +60,9 @@ public:
       }
     }
     if (fake_upstream_connection != nullptr) {
-      fake_upstream_connection->close();
+      if (fake_upstream_connection->connected()) {
+        fake_upstream_connection->close();
+      }
       fake_upstream_connection->waitForDisconnect(true);
     }
     tcp_client->close();
@@ -70,7 +76,7 @@ public:
 // Fuzz the H1 processing pipeline.
 DEFINE_PROTO_FUZZER(const test::integration::CaptureFuzzTestCase& input) {
   // Pick an IP version to use for loopback, it doesn't matter which.
-  RELEASE_ASSERT(TestEnvironment::getIpVersionsForTest().size() > 0);
+  RELEASE_ASSERT(TestEnvironment::getIpVersionsForTest().size() > 0, "");
   const auto ip_version = TestEnvironment::getIpVersionsForTest()[0];
   H1FuzzIntegrationTest h1_fuzz_integration_test(ip_version);
   h1_fuzz_integration_test.replay(input);

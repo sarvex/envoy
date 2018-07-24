@@ -93,8 +93,8 @@ protected:
   // Waits for the complete downstream response before returning.
   // Requires |codec_client_| to be initialized.
   IntegrationStreamDecoderPtr sendRequestAndWaitForResponse(
-      Http::TestHeaderMapImpl& request_headers, uint32_t request_body_size,
-      Http::TestHeaderMapImpl& response_headers, uint32_t response_body_size);
+      const Http::TestHeaderMapImpl& request_headers, uint32_t request_body_size,
+      const Http::TestHeaderMapImpl& response_headers, uint32_t response_body_size);
 
   // Wait for the end of stream on the next upstream stream on fake_upstreams_
   // Sets fake_upstream_connection_ to the connection and upstream_request_ to stream.
@@ -145,6 +145,7 @@ protected:
   void testAbsolutePathWithPort();
   void testAbsolutePathWithoutPort();
   void testConnect();
+  void testInlineHeaders();
   void testAllowAbsoluteSameRelative();
   // Test that a request returns the same content with both allow_absolute_urls enabled and
   // allow_absolute_urls disabled
@@ -158,10 +159,12 @@ protected:
   void testDrainClose();
   void testRetry();
   void testRetryHittingBufferLimit();
+  void testGrpcRouterNotFound();
   void testGrpcRetry();
   void testHittingDecoderFilterLimit();
   void testHittingEncoderFilterLimit();
-  void testEnvoyHandling100Continue(bool additional_continue_from_upstream = false);
+  void testEnvoyHandling100Continue(bool additional_continue_from_upstream = false,
+                                    const std::string& via = "");
   void testEnvoyProxying100Continue(bool continue_before_upstream_complete = false,
                                     bool with_encoder_filter = false);
 

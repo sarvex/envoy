@@ -61,6 +61,14 @@ public:
     filter_->onBelowWriteBufferLowWatermark();
   }
 
+  Filters::Common::ExtAuthz::ResponsePtr
+  makeAuthzResponse(Filters::Common::ExtAuthz::CheckStatus status) {
+    Filters::Common::ExtAuthz::ResponsePtr response =
+        std::make_unique<Filters::Common::ExtAuthz::Response>();
+    response->status = status;
+    return response;
+  }
+
   ~ExtAuthzFilterTest() {
     for (const Stats::GaugeSharedPtr& gauge : stats_store_.gauges()) {
       EXPECT_EQ(0U, gauge->value());
@@ -114,7 +122,7 @@ TEST_F(ExtAuthzFilterTest, OKWithOnData) {
   EXPECT_EQ(1U, stats_store_.gauge("ext_authz.name.active").value());
 
   EXPECT_CALL(filter_callbacks_, continueReading());
-  request_callbacks_->onComplete(Filters::Common::ExtAuthz::CheckStatus::OK);
+  request_callbacks_->onComplete(makeAuthzResponse(Filters::Common::ExtAuthz::CheckStatus::OK));
 
   EXPECT_EQ(Network::FilterStatus::Continue, filter_->onData(data, false));
 
@@ -152,9 +160,9 @@ TEST_F(ExtAuthzFilterTest, DeniedWithOnData) {
 
   EXPECT_CALL(filter_callbacks_.connection_, close(Network::ConnectionCloseType::NoFlush));
   EXPECT_CALL(*client_, cancel()).Times(0);
-  request_callbacks_->onComplete(Filters::Common::ExtAuthz::CheckStatus::Denied);
+  request_callbacks_->onComplete(makeAuthzResponse(Filters::Common::ExtAuthz::CheckStatus::Denied));
 
-  EXPECT_EQ(Network::FilterStatus::Continue, filter_->onData(data, false));
+  EXPECT_EQ(Network::FilterStatus::StopIteration, filter_->onData(data, false));
 
   EXPECT_EQ(1U, stats_store_.counter("ext_authz.name.total").value());
   EXPECT_EQ(0U, stats_store_.counter("ext_authz.name.error").value());
@@ -182,7 +190,7 @@ TEST_F(ExtAuthzFilterTest, FailOpen) {
   EXPECT_CALL(filter_callbacks_.connection_, close(_)).Times(0);
   EXPECT_CALL(*client_, cancel()).Times(0);
   EXPECT_CALL(filter_callbacks_, continueReading());
-  request_callbacks_->onComplete(Filters::Common::ExtAuthz::CheckStatus::Error);
+  request_callbacks_->onComplete(makeAuthzResponse(Filters::Common::ExtAuthz::CheckStatus::Error));
 
   EXPECT_EQ(Network::FilterStatus::Continue, filter_->onData(data, false));
 
@@ -213,7 +221,7 @@ TEST_F(ExtAuthzFilterTest, FailClose) {
 
   EXPECT_CALL(filter_callbacks_.connection_, close(_)).Times(1);
   EXPECT_CALL(filter_callbacks_, continueReading()).Times(0);
-  request_callbacks_->onComplete(Filters::Common::ExtAuthz::CheckStatus::Error);
+  request_callbacks_->onComplete(makeAuthzResponse(Filters::Common::ExtAuthz::CheckStatus::Error));
 
   EXPECT_EQ(1U, stats_store_.counter("ext_authz.name.total").value());
   EXPECT_EQ(1U, stats_store_.counter("ext_authz.name.error").value());
@@ -241,7 +249,7 @@ TEST_F(ExtAuthzFilterTest, DoNotCallCancelonRemoteClose) {
   EXPECT_EQ(Network::FilterStatus::StopIteration, filter_->onData(data, false));
 
   EXPECT_CALL(filter_callbacks_, continueReading());
-  request_callbacks_->onComplete(Filters::Common::ExtAuthz::CheckStatus::Error);
+  request_callbacks_->onComplete(makeAuthzResponse(Filters::Common::ExtAuthz::CheckStatus::Error));
 
   EXPECT_EQ(Network::FilterStatus::Continue, filter_->onData(data, false));
 
@@ -295,7 +303,7 @@ TEST_F(ExtAuthzFilterTest, ImmediateOK) {
   EXPECT_CALL(*client_, check(_, _, _))
       .WillOnce(
           WithArgs<0>(Invoke([&](Filters::Common::ExtAuthz::RequestCallbacks& callbacks) -> void {
-            callbacks.onComplete(Filters::Common::ExtAuthz::CheckStatus::OK);
+            callbacks.onComplete(makeAuthzResponse(Filters::Common::ExtAuthz::CheckStatus::OK));
           })));
 
   EXPECT_EQ(Network::FilterStatus::Continue, filter_->onNewConnection());
@@ -314,6 +322,32 @@ TEST_F(ExtAuthzFilterTest, ImmediateOK) {
   EXPECT_EQ(0U, stats_store_.counter("ext_authz.name.cx_closed").value());
 }
 
+// Test to verify that on stack denied response from the authorization service does
+// result in stopage of the filter chain.
+TEST_F(ExtAuthzFilterTest, ImmediateNOK) {
+  InSequence s;
+
+  EXPECT_CALL(filter_callbacks_.connection_, remoteAddress()).WillOnce(ReturnRef(addr_));
+  EXPECT_CALL(filter_callbacks_.connection_, localAddress()).WillOnce(ReturnRef(addr_));
+  EXPECT_CALL(filter_callbacks_, continueReading()).Times(0);
+  EXPECT_CALL(*client_, check(_, _, _))
+      .WillOnce(
+          WithArgs<0>(Invoke([&](Filters::Common::ExtAuthz::RequestCallbacks& callbacks) -> void {
+            callbacks.onComplete(makeAuthzResponse(Filters::Common::ExtAuthz::CheckStatus::Denied));
+          })));
+
+  EXPECT_EQ(Network::FilterStatus::Continue, filter_->onNewConnection());
+  Buffer::OwnedImpl data("hello");
+  EXPECT_EQ(Network::FilterStatus::StopIteration, filter_->onData(data, false));
+
+  EXPECT_EQ(1U, stats_store_.counter("ext_authz.name.total").value());
+  EXPECT_EQ(0U, stats_store_.counter("ext_authz.name.error").value());
+  EXPECT_EQ(0U, stats_store_.counter("ext_authz.name.failure_mode_allowed").value());
+  EXPECT_EQ(1U, stats_store_.counter("ext_authz.name.denied").value());
+  EXPECT_EQ(0U, stats_store_.counter("ext_authz.name.ok").value());
+  EXPECT_EQ(1U, stats_store_.counter("ext_authz.name.cx_closed").value());
+}
+
 // Test to verify that on stack Error response when failure_mode_allow is configured
 // result in request being allowed.
 TEST_F(ExtAuthzFilterTest, ImmediateErrorFailOpen) {
@@ -325,7 +359,7 @@ TEST_F(ExtAuthzFilterTest, ImmediateErrorFailOpen) {
   EXPECT_CALL(*client_, check(_, _, _))
       .WillOnce(
           WithArgs<0>(Invoke([&](Filters::Common::ExtAuthz::RequestCallbacks& callbacks) -> void {
-            callbacks.onComplete(Filters::Common::ExtAuthz::CheckStatus::Error);
+            callbacks.onComplete(makeAuthzResponse(Filters::Common::ExtAuthz::CheckStatus::Error));
           })));
 
   EXPECT_EQ(Network::FilterStatus::Continue, filter_->onNewConnection());

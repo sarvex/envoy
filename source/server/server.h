@@ -18,8 +18,11 @@
 
 #include "common/access_log/access_log_manager_impl.h"
 #include "common/common/logger_delegates.h"
+#include "common/grpc/async_client_manager_impl.h"
 #include "common/runtime/runtime_impl.h"
+#include "common/secret/secret_manager_impl.h"
 #include "common/ssl/context_manager_impl.h"
+#include "common/upstream/health_discovery_service.h"
 
 #include "server/http/admin.h"
 #include "server/init_manager_impl.h"
@@ -44,7 +47,8 @@ namespace Server {
   GAUGE(parent_connections)                                                                        \
   GAUGE(total_connections)                                                                         \
   GAUGE(version)                                                                                   \
-  GAUGE(days_until_first_cert_expiring)
+  GAUGE(days_until_first_cert_expiring)                                                            \
+  GAUGE(hot_restart_epoch)
 // clang-format on
 
 struct ServerStats {
@@ -84,12 +88,11 @@ public:
 
   /**
    * Helper for flushing counters, gauges and hisograms to sinks. This takes care of calling
-   * beginFlush(), latching of counters and flushing, flushing of gauges, and calling endFlush(), on
-   * each sink.
+   * flush() on each sink and clearing the cache afterward.
    * @param sinks supplies the list of sinks.
-   * @param store supplies the store to flush.
+   * @param source provides the metrics being flushed.
    */
-  static void flushMetricsToSinks(const std::list<Stats::SinkPtr>& sinks, Stats::Store& store);
+  static void flushMetricsToSinks(const std::list<Stats::SinkPtr>& sinks, Stats::Source& source);
 
   /**
    * Load a bootstrap config from either v1 or v2 and perform validation.
@@ -151,6 +154,7 @@ public:
   HotRestart& hotRestart() override { return restarter_; }
   Init::Manager& initManager() override { return init_manager_; }
   ListenerManager& listenerManager() override { return *listener_manager_; }
+  Secret::SecretManager& secretManager() override { return *secret_manager_; }
   Runtime::RandomGenerator& random() override { return *random_generator_; }
   RateLimit::ClientPtr
   rateLimitClient(const absl::optional<std::chrono::milliseconds>& timeout) override {
@@ -169,7 +173,12 @@ public:
   ThreadLocal::Instance& threadLocal() override { return thread_local_; }
   const LocalInfo::LocalInfo& localInfo() override { return *local_info_; }
 
+  std::chrono::milliseconds statsFlushInterval() const override {
+    return config_->statsFlushInterval();
+  }
+
 private:
+  ProtobufTypes::MessagePtr dumpBootstrapConfig();
   void flushStats();
   void initialize(Options& options, Network::Address::InstanceConstSharedPtr local_address,
                   ComponentFactory& component_factory);
@@ -196,6 +205,7 @@ private:
   ProdListenerComponentFactory listener_component_factory_;
   ProdWorkerFactory worker_factory_;
   std::unique_ptr<ListenerManager> listener_manager_;
+  std::unique_ptr<Secret::SecretManager> secret_manager_;
   std::unique_ptr<Configuration::Main> config_;
   Network::DnsResolverSharedPtr dns_resolver_;
   Event::TimerPtr stat_flush_timer_;
@@ -207,6 +217,11 @@ private:
   std::unique_ptr<Server::GuardDog> guard_dog_;
   bool terminated_;
   std::unique_ptr<Logger::FileSinkDelegate> file_logger_;
+  envoy::config::bootstrap::v2::Bootstrap bootstrap_;
+  ConfigTracker::EntryOwnerPtr config_tracker_entry_;
+  SystemTime bootstrap_config_update_time_;
+  Grpc::AsyncClientManagerPtr async_client_manager_;
+  Upstream::HdsDelegatePtr hds_delegate_;
 };
 
 } // namespace Server

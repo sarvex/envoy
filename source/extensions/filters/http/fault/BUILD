@@ -1,4 +1,5 @@
 licenses(["notice"])  # Apache 2
+
 # HTTP L7 filter that injects faults into the request flow
 # Public docs: docs/root/configuration/http_filters/fault_filter.rst
 
@@ -39,9 +40,9 @@ envoy_cc_library(
     hdrs = ["config.h"],
     deps = [
         "//include/envoy/registry",
-        "//include/envoy/server:filter_config_interface",
         "//source/common/config:filter_json_lib",
         "//source/extensions/filters/http:well_known_names",
+        "//source/extensions/filters/http/common:factory_base_lib",
         "//source/extensions/filters/http/fault:fault_filter_lib",
     ],
 )

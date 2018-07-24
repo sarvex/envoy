@@ -1,20 +1,24 @@
 REPOSITORY_LOCATIONS = dict(
     boringssl = dict(
         # Use commits from branch "chromium-stable-with-bazel"
-        commit = "c386d2b324468137bcbf2e7a1020da7579f7ab48",  # chromium-66.0.3359.117
+        commit = "2a52ce799382c87cd3119f3b44fbbebf97061ab6",  # chromium-67.0.3396.62
         remote = "https://github.com/google/boringssl",
     ),
     com_google_absl = dict(
-        # Do not upgrade further until https://github.com/abseil/abseil-cpp/issues/118 is fixed.
-        commit = "26b789f9a53d086c8b8c9c2668efb251e37861cd",  # 2018-05-04
+        commit = "92020a042c0cd46979db9f6f0cb32783dc07765e",  # 2018-06-08
         remote = "https://github.com/abseil/abseil-cpp",
+    ),
+    com_github_apache_thrift = dict(
+        sha256 = "7d59ac4fdcb2c58037ebd4a9da5f9a49e3e034bf75b3f26d9fe48ba3d8806e6b",
+        urls = ["https://files.pythonhosted.org/packages/c6/b4/510617906f8e0c5660e7d96fbc5585113f83ad547a3989b80297ac72a74c/thrift-0.11.0.tar.gz"],  # 0.11.0
+        strip_prefix = "thrift-0.11.0",
     ),
     com_github_bombela_backward = dict(
         commit = "44ae9609e860e3428cd057f7052e505b4819eb84",  # 2018-02-06
         remote = "https://github.com/bombela/backward-cpp",
     ),
     com_github_circonus_labs_libcircllhist = dict(
-        commit = "476687ac9cc636fc92ac3070246d757ae6854547",  # 2018-05-08
+        commit = "050da53a44dede7bda136b93a9aeef47bd91fa12",  # 2018-07-02
         remote = "https://github.com/circonus-labs/libcircllhist",
     ),
     com_github_cyan4973_xxhash = dict(
@@ -26,14 +30,14 @@ REPOSITORY_LOCATIONS = dict(
         remote = "https://github.com/eile/tclap",
     ),
     com_github_fmtlib_fmt = dict(
-        sha256 = "10a9f184d4d66f135093a08396d3b0a0ebe8d97b79f8b3ddb8559f75fe4fcbc3",
-        strip_prefix = "fmt-4.0.0",
-        urls = ["https://github.com/fmtlib/fmt/releases/download/4.0.0/fmt-4.0.0.zip"],
+        sha256 = "46628a2f068d0e33c716be0ed9dcae4370242df135aed663a180b9fd8e36733d",
+        strip_prefix = "fmt-4.1.0",
+        urls = ["https://github.com/fmtlib/fmt/archive/4.1.0.tar.gz"],
     ),
     com_github_gabime_spdlog = dict(
-        sha256 = "b88d7be261d9089c817fc8cee6c000d69f349b357828e4c7f66985bc5d5360b8",
-        strip_prefix = "spdlog-0.16.3",
-        urls = ["https://github.com/gabime/spdlog/archive/v0.16.3.tar.gz"],
+        sha256 = "94f74fd1b3344733d1db3de2ec22e6cbeb769f93a8baa0d4a22b1f62dc7369f8",
+        strip_prefix = "spdlog-0.17.0",
+        urls = ["https://github.com/gabime/spdlog/archive/v0.17.0.tar.gz"],
     ),
     com_github_gcovr_gcovr = dict(
         commit = "c0d77201039c7b119b18bc7fb991564c602dd75d",
@@ -44,27 +48,35 @@ REPOSITORY_LOCATIONS = dict(
         remote = "https://github.com/google/libprotobuf-mutator",
     ),
     com_github_grpc_grpc = dict(
-        commit = "bd44e485f69d70ca4095cea92decd98de3892aa6", # v1.11.0
+        commit = "bec3b5ada2c5e5d782dff0b7b5018df646b65cb0",  # v1.12.0
         remote = "https://github.com/grpc/grpc.git",
     ),
     io_opentracing_cpp = dict(
-        commit = "900f9d9297a71ddf4a5dff2051a01493014c07c5", # v1.4.0
+        commit = "3b36b084a4d7fffc196eac83203cf24dfb8696b3",  # v1.4.2
         remote = "https://github.com/opentracing/opentracing-cpp",
     ),
     com_lightstep_tracer_cpp = dict(
-        commit = "4ea8bda9aed08ad45d6db2a030a1464e8d9b783f",
-        remote = "https://github.com/lightstep/lightstep-tracer-cpp", # v0.7.0
+        commit = "ae6a6bba65f8c4d438a6a3ac855751ca8f52e1dc",
+        remote = "https://github.com/lightstep/lightstep-tracer-cpp",  # v0.7.1
     ),
     lightstep_vendored_googleapis = dict(
         commit = "d6f78d948c53f3b400bb46996eb3084359914f9b",
         remote = "https://github.com/google/googleapis",
     ),
+    com_github_google_jwt_verify = dict(
+        commit = "4eb9e96485b71e00d43acc7207501caafb085b4a",
+        remote = "https://github.com/google/jwt_verify_lib",
+    ),
     com_github_nodejs_http_parser = dict(
-        commit = "54f55a2f02a823e5f5c87abe853bb76d1170718d",  # v2.8.1
+        # 2018-07-20 snapshot to pick up:
+        # A performance fix, nodejs/http-parser PR 422.
+        # A bug fix, nodejs/http-parser PR 432.
+        # TODO(brian-pane): Upgrade to the next http-parser release once it's available
+        commit = "77310eeb839c4251c07184a5db8885a572a08352",
         remote = "https://github.com/nodejs/http-parser",
     ),
     com_github_pallets_jinja = dict(
-        commit = "d78a1b079cd985eea7d636f79124ab4fc44cb538",  # 2.9.6
+        commit = "78d2f672149e5b9b7d539c575d2c1bfc12db67a9",  # 2.10
         remote = "https://github.com/pallets/jinja",
     ),
     com_github_pallets_markupsafe = dict(
@@ -75,21 +87,39 @@ REPOSITORY_LOCATIONS = dict(
         commit = "f54b0e47a08782a6131cc3d60f94d038fa6e0a51",  # v1.1.0
         remote = "https://github.com/tencent/rapidjson",
     ),
+    com_github_twitter_common_lang = dict(
+        sha256 = "56d1d266fd4767941d11c27061a57bc1266a3342e551bde3780f9e9eb5ad0ed1",
+        urls = ["https://files.pythonhosted.org/packages/08/bc/d6409a813a9dccd4920a6262eb6e5889e90381453a5f58938ba4cf1d9420/twitter.common.lang-0.3.9.tar.gz"],  # 0.3.9
+        strip_prefix = "twitter.common.lang-0.3.9/src",
+    ),
+    com_github_twitter_common_rpc = dict(
+        sha256 = "0792b63fb2fb32d970c2e9a409d3d00633190a22eb185145fe3d9067fdaa4514",
+        urls = ["https://files.pythonhosted.org/packages/be/97/f5f701b703d0f25fbf148992cd58d55b4d08d3db785aad209255ee67e2d0/twitter.common.rpc-0.3.9.tar.gz"],  # 0.3.9
+        strip_prefix = "twitter.common.rpc-0.3.9/src",
+    ),
+    com_github_twitter_common_finagle_thrift = dict(
+        sha256 = "1e3a57d11f94f58745e6b83348ecd4fa74194618704f45444a15bc391fde497a",
+        urls = ["https://files.pythonhosted.org/packages/f9/e7/4f80d582578f8489226370762d2cf6bc9381175d1929eba1754e03f70708/twitter.common.finagle-thrift-0.3.9.tar.gz"],  # 0.3.9
+        strip_prefix = "twitter.common.finagle-thrift-0.3.9/src",
+    ),
     com_google_googletest = dict(
         commit = "43863938377a9ea1399c0596269e0890b5c5515a",
         remote = "https://github.com/google/googletest",
     ),
     com_google_protobuf = dict(
-        sha256 = "826425182ee43990731217b917c5c3ea7190cfda141af4869e6d4ad9085a740f",
-        strip_prefix = "protobuf-3.5.1",
-        urls = ["https://github.com/google/protobuf/archive/v3.5.1.tar.gz"],
+        # TODO(htuch): Switch back to released versions for protobuf when a release > 3.6.0 happens
+        # that includes:
+        # - https://github.com/google/protobuf/commit/f35669b8d3f46f7f1236bd21f14d744bba251e60
+        # - https://github.com/google/protobuf/commit/6a4fec616ec4b20f54d5fb530808b855cb664390
+        commit = "6a4fec616ec4b20f54d5fb530808b855cb664390",
+        remote = "https://github.com/google/protobuf",
     ),
     grpc_httpjson_transcoding = dict(
-        commit = "e4f58aa07b9002befa493a0a82e10f2e98b51fc6",
+        commit = "05a15e4ecd0244a981fdf0348a76658def62fa9c",  # 2018-05-30
         remote = "https://github.com/grpc-ecosystem/grpc-httpjson-transcoding",
     ),
     io_bazel_rules_go = dict(
-        commit = "0.10.3",
+        commit = "0.11.1",
         remote = "https://github.com/bazelbuild/rules_go",
     ),
     six_archive = dict(

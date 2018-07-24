@@ -50,20 +50,30 @@ public:
     EXPECT_CALL(*cluster.info_, type());
     interval_timer_ = new Event::MockTimer(&dispatcher_);
     EXPECT_CALL(init_, registerTarget(_));
-    lds_.reset(new LdsApi(lds_config, cluster_manager_, dispatcher_, random_, init_, local_info_,
-                          store_, listener_manager_));
+    lds_.reset(new LdsApiImpl(lds_config, cluster_manager_, dispatcher_, random_, init_,
+                              local_info_, store_, listener_manager_));
 
     expectRequest();
     init_.initialize();
   }
 
-  void expectAdd(const std::string& listener_name, bool updated) {
-    EXPECT_CALL(listener_manager_, addOrUpdateListener(_, true))
-        .WillOnce(
-            Invoke([listener_name, updated](const envoy::api::v2::Listener& config, bool) -> bool {
-              EXPECT_EQ(listener_name, config.name());
-              return updated;
-            }));
+  void expectAdd(const std::string& listener_name, absl::optional<std::string> version,
+                 bool updated) {
+    if (!version) {
+      EXPECT_CALL(listener_manager_, addOrUpdateListener(_, _, true))
+          .WillOnce(Invoke([listener_name, updated](const envoy::api::v2::Listener& config,
+                                                    const std::string&, bool) -> bool {
+            EXPECT_EQ(listener_name, config.name());
+            return updated;
+          }));
+    } else {
+      EXPECT_CALL(listener_manager_, addOrUpdateListener(_, version.value(), true))
+          .WillOnce(Invoke([listener_name, updated](const envoy::api::v2::Listener& config,
+                                                    const std::string&, bool) -> bool {
+            EXPECT_EQ(listener_name, config.name());
+            return updated;
+          }));
+    }
   }
 
   void expectRequest() {
@@ -103,7 +113,7 @@ public:
   Stats::IsolatedStoreImpl store_;
   MockListenerManager listener_manager_;
   Http::MockAsyncClientRequest request_;
-  std::unique_ptr<LdsApi> lds_;
+  std::unique_ptr<LdsApiImpl> lds_;
   Event::MockTimer* interval_timer_{};
   Http::AsyncClient::Callbacks* callbacks_{};
 
@@ -138,8 +148,8 @@ TEST_F(LdsApiTest, UnknownCluster) {
   Upstream::ClusterManager::ClusterInfoMap cluster_map;
   EXPECT_CALL(cluster_manager_, clusters()).WillOnce(Return(cluster_map));
   EXPECT_THROW_WITH_MESSAGE(
-      LdsApi(lds_config, cluster_manager_, dispatcher_, random_, init_, local_info_, store_,
-             listener_manager_),
+      LdsApiImpl(lds_config, cluster_manager_, dispatcher_, random_, init_, local_info_, store_,
+                 listener_manager_),
       EnvoyException,
       "envoy::api::v2::core::ConfigSource must have a statically defined non-EDS "
       "cluster: 'foo_cluster' does not exist, was added via api, or is an "
@@ -164,7 +174,7 @@ TEST_F(LdsApiTest, MisconfiguredListenerNameIsPresentInException) {
 
   EXPECT_CALL(listener_manager_, listeners()).WillOnce(Return(existing_listeners));
 
-  EXPECT_CALL(listener_manager_, addOrUpdateListener(_, true))
+  EXPECT_CALL(listener_manager_, addOrUpdateListener(_, _, true))
       .WillOnce(Throw(EnvoyException("something is wrong")));
 
   EXPECT_THROW_WITH_MESSAGE(lds_->onConfigUpdate(listeners, ""), EnvoyException,
@@ -192,8 +202,8 @@ TEST_F(LdsApiTest, BadLocalInfo) {
   EXPECT_CALL(*cluster.info_, addedViaApi());
   EXPECT_CALL(*cluster.info_, type());
   ON_CALL(local_info_, clusterName()).WillByDefault(Return(std::string()));
-  EXPECT_THROW_WITH_MESSAGE(LdsApi(lds_config, cluster_manager_, dispatcher_, random_, init_,
-                                   local_info_, store_, listener_manager_),
+  EXPECT_THROW_WITH_MESSAGE(LdsApiImpl(lds_config, cluster_manager_, dispatcher_, random_, init_,
+                                       local_info_, store_, listener_manager_),
                             EnvoyException,
                             "lds: setting --service-cluster and --service-node is required");
 }
@@ -225,8 +235,8 @@ TEST_F(LdsApiTest, Basic) {
   message->body().reset(new Buffer::OwnedImpl(response1_json));
 
   makeListenersAndExpectCall({});
-  expectAdd("listener1", true);
-  expectAdd("listener2", true);
+  expectAdd("listener1", "hash_d5b83398260abbbc", true);
+  expectAdd("listener2", "hash_d5b83398260abbbc", true);
   EXPECT_CALL(init_.initialized_, ready());
   EXPECT_CALL(*interval_timer_, enableTimer(_));
   callbacks_->onSuccess(std::move(message));
@@ -258,9 +268,9 @@ TEST_F(LdsApiTest, Basic) {
   message->body().reset(new Buffer::OwnedImpl(response2_json));
 
   makeListenersAndExpectCall({"listener1", "listener2"});
-  expectAdd("listener1", false);
-  expectAdd("listener3", true);
   EXPECT_CALL(listener_manager_, removeListener("listener2")).WillOnce(Return(true));
+  expectAdd("listener1", "hash_fabfe23d041792d3", false);
+  expectAdd("listener3", "hash_fabfe23d041792d3", true);
   EXPECT_CALL(*interval_timer_, enableTimer(_));
   callbacks_->onSuccess(std::move(message));
   EXPECT_EQ(Config::Utility::computeHashedVersion(response2_json).first, lds_->versionInfo());
@@ -339,7 +349,8 @@ TEST_F(LdsApiTest, TlsConfigWithoutCaCert) {
   makeListenersAndExpectCall({
       "listener-8080",
   });
-  expectAdd("listener-8080", true);
+  // Can't check version here because of bazel sandbox paths for the certs.
+  expectAdd("listener-8080", {}, true);
   EXPECT_CALL(*interval_timer_, enableTimer(_));
   EXPECT_NO_THROW(callbacks_->onSuccess(std::move(message)));
   EXPECT_EQ(Config::Utility::computeHashedVersion(response2_json).first, lds_->versionInfo());
@@ -374,6 +385,78 @@ TEST_F(LdsApiTest, Failure) {
   EXPECT_EQ(2UL, store_.counter("listener_manager.lds.update_attempt").value());
   EXPECT_EQ(2UL, store_.counter("listener_manager.lds.update_failure").value());
   EXPECT_EQ(0UL, store_.gauge("listener_manager.lds.version").value());
+}
+
+TEST_F(LdsApiTest, ReplacingListenerWithSameAddress) {
+  InSequence s;
+
+  setup();
+
+  const std::string response1_json = R"EOF(
+  {
+    "listeners": [
+    {
+      "name": "listener1",
+      "address": "tcp://0.0.0.0:1",
+      "filters": []
+    },
+    {
+      "name": "listener2",
+      "address": "tcp://0.0.0.0:2",
+      "filters": []
+    }
+    ]
+  }
+  )EOF";
+
+  Http::MessagePtr message(new Http::ResponseMessageImpl(
+      Http::HeaderMapPtr{new Http::TestHeaderMapImpl{{":status", "200"}}}));
+  message->body().reset(new Buffer::OwnedImpl(response1_json));
+
+  makeListenersAndExpectCall({});
+  expectAdd("listener1", "hash_d5b83398260abbbc", true);
+  expectAdd("listener2", "hash_d5b83398260abbbc", true);
+  EXPECT_CALL(init_.initialized_, ready());
+  EXPECT_CALL(*interval_timer_, enableTimer(_));
+  callbacks_->onSuccess(std::move(message));
+
+  EXPECT_EQ(Config::Utility::computeHashedVersion(response1_json).first, lds_->versionInfo());
+  EXPECT_EQ(15400115654359694268U, store_.gauge("listener_manager.lds.version").value());
+  expectRequest();
+  interval_timer_->callback_();
+
+  const std::string response2_json = R"EOF(
+  {
+    "listeners": [
+    {
+      "name": "listener1",
+      "address": "tcp://0.0.0.0:1",
+      "filters": []
+    },
+    {
+      "name": "listener3",
+      "address": "tcp://0.0.0.0:2",
+      "filters": []
+    }
+    ]
+  }
+  )EOF";
+
+  message.reset(new Http::ResponseMessageImpl(
+      Http::HeaderMapPtr{new Http::TestHeaderMapImpl{{":status", "200"}}}));
+  message->body().reset(new Buffer::OwnedImpl(response2_json));
+
+  makeListenersAndExpectCall({"listener1", "listener2"});
+  EXPECT_CALL(listener_manager_, removeListener("listener2")).WillOnce(Return(true));
+  expectAdd("listener1", "hash_16e261d4c65402a2", false);
+  expectAdd("listener3", "hash_16e261d4c65402a2", true);
+  EXPECT_CALL(*interval_timer_, enableTimer(_));
+  callbacks_->onSuccess(std::move(message));
+
+  EXPECT_EQ(Config::Utility::computeHashedVersion(response2_json).first, lds_->versionInfo());
+  EXPECT_EQ(2UL, store_.counter("listener_manager.lds.update_attempt").value());
+  EXPECT_EQ(2UL, store_.counter("listener_manager.lds.update_success").value());
+  EXPECT_EQ(1648987980059378338U, store_.gauge("listener_manager.lds.version").value());
 }
 
 } // namespace Server

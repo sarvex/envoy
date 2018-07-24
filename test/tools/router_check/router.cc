@@ -7,6 +7,7 @@
 
 #include "common/network/utility.h"
 #include "common/request_info/request_info_impl.h"
+#include "common/stats/stats_impl.h"
 
 #include "test/test_common/printers.h"
 
@@ -44,7 +45,9 @@ RouterCheckTool RouterCheckTool::create(const std::string& router_config_json) {
   // TODO(hennna): Allow users to load a full config and extract the route configuration from it.
   Json::ObjectSharedPtr loader = Json::Factory::loadFromFile(router_config_json);
   envoy::api::v2::RouteConfiguration route_config;
-  Config::RdsJson::translateRouteConfiguration(*loader, route_config);
+  // TODO(ambuc): Add a CLI option to allow for a maxStatNameLength constraint
+  Stats::StatsOptionsImpl stats_options;
+  Config::RdsJson::translateRouteConfiguration(*loader, route_config, stats_options);
 
   std::unique_ptr<NiceMock<Server::Configuration::MockFactoryContext>> factory_context(
       std::make_unique<NiceMock<Server::Configuration::MockFactoryContext>>());
@@ -169,7 +172,8 @@ bool RouterCheckTool::compareRewritePath(ToolConfig& tool_config, const std::str
   std::string actual = "";
   Envoy::RequestInfo::RequestInfoImpl request_info(Envoy::Http::Protocol::Http11);
   if (tool_config.route_->routeEntry() != nullptr) {
-    tool_config.route_->routeEntry()->finalizeRequestHeaders(*tool_config.headers_, request_info);
+    tool_config.route_->routeEntry()->finalizeRequestHeaders(*tool_config.headers_, request_info,
+                                                             true);
     actual = tool_config.headers_->get_(Http::Headers::get().Path);
   }
   return compareResults(actual, expected, "path_rewrite");
@@ -179,7 +183,8 @@ bool RouterCheckTool::compareRewriteHost(ToolConfig& tool_config, const std::str
   std::string actual = "";
   Envoy::RequestInfo::RequestInfoImpl request_info(Envoy::Http::Protocol::Http11);
   if (tool_config.route_->routeEntry() != nullptr) {
-    tool_config.route_->routeEntry()->finalizeRequestHeaders(*tool_config.headers_, request_info);
+    tool_config.route_->routeEntry()->finalizeRequestHeaders(*tool_config.headers_, request_info,
+                                                             true);
     actual = tool_config.headers_->get_(Http::Headers::get().Host);
   }
   return compareResults(actual, expected, "host_rewrite");
@@ -204,9 +209,10 @@ bool RouterCheckTool::compareCustomHeaderField(ToolConfig& tool_config, const st
                                                const std::string& expected) {
   std::string actual = "";
   Envoy::RequestInfo::RequestInfoImpl request_info(Envoy::Http::Protocol::Http11);
-  request_info.downstream_remote_address_ = Network::Utility::getCanonicalIpv4LoopbackAddress();
+  request_info.setDownstreamRemoteAddress(Network::Utility::getCanonicalIpv4LoopbackAddress());
   if (tool_config.route_->routeEntry() != nullptr) {
-    tool_config.route_->routeEntry()->finalizeRequestHeaders(*tool_config.headers_, request_info);
+    tool_config.route_->routeEntry()->finalizeRequestHeaders(*tool_config.headers_, request_info,
+                                                             true);
     actual = tool_config.headers_->get_(field);
   }
   return compareResults(actual, expected, "custom_header");

@@ -1,10 +1,12 @@
 #include "common/grpc/google_async_client_impl.h"
 
-#include "envoy/grpc/google_async_site.h"
-
 #include "common/common/empty_string.h"
+#include "common/common/lock_guard.h"
 #include "common/config/datasource.h"
+#include "common/grpc/google_grpc_creds_impl.h"
 #include "common/tracing/http_tracer_impl.h"
+
+#include "grpcpp/support/proto_buffer_reader.h"
 
 namespace Envoy {
 namespace Grpc {
@@ -42,7 +44,7 @@ void GoogleAsyncClientThreadLocal::completionThread() {
     const GoogleAsyncTag::Operation op = google_async_tag.op_;
     GoogleAsyncStreamImpl& stream = google_async_tag.stream_;
     ENVOY_LOG(trace, "completionThread CQ event {} {}", op, ok);
-    absl::MutexLock lock(&stream.completed_ops_lock_);
+    Thread::LockGuard lock(stream.completed_ops_lock_);
 
     // It's an invariant that there must only be one pending post for arbitrary
     // length completed_ops_, otherwise we can race in stream destruction, where
@@ -71,25 +73,8 @@ GoogleAsyncClientImpl::GoogleAsyncClientImpl(Event::Dispatcher& dispatcher,
   // smart enough to do connection pooling and reuse with identical channel args, so this should
   // have comparable overhead to what we are doing in Grpc::AsyncClientImpl, i.e. no expensive
   // new connection implied.
-  const auto& google_grpc = config.google_grpc();
-  std::shared_ptr<grpc::ChannelCredentials> creds = GoogleSite::channelCredentials(google_grpc);
-  // TODO(htuch): add support for OAuth2, GCP, etc. credentials.
-  if (creds == nullptr) {
-    if (google_grpc.has_ssl_credentials()) {
-      const grpc::SslCredentialsOptions ssl_creds = {
-          .pem_root_certs =
-              Config::DataSource::read(google_grpc.ssl_credentials().root_certs(), true),
-          .pem_private_key =
-              Config::DataSource::read(google_grpc.ssl_credentials().private_key(), true),
-          .pem_cert_chain =
-              Config::DataSource::read(google_grpc.ssl_credentials().cert_chain(), true),
-      };
-      creds = grpc::SslCredentials(ssl_creds);
-    } else {
-      creds = grpc::InsecureChannelCredentials();
-    }
-  }
-  std::shared_ptr<grpc::Channel> channel = CreateChannel(google_grpc.target_uri(), creds);
+  std::shared_ptr<grpc::ChannelCredentials> creds = getGoogleGrpcChannelCredentials(config);
+  std::shared_ptr<grpc::Channel> channel = CreateChannel(config.google_grpc().target_uri(), creds);
   stub_ = stub_factory.createStub(channel);
   // Initialize client stats.
   stats_.streams_total_ = &scope_->counter("streams_total");
@@ -240,7 +225,7 @@ void GoogleAsyncStreamImpl::writeQueued() {
 }
 
 void GoogleAsyncStreamImpl::onCompletedOps() {
-  absl::MutexLock lock(&completed_ops_lock_);
+  Thread::LockGuard lock(completed_ops_lock_);
   while (!completed_ops_.empty()) {
     GoogleAsyncTag::Operation op;
     bool ok;
@@ -315,31 +300,19 @@ void GoogleAsyncStreamImpl::handleOpCompletion(GoogleAsyncTag::Operation op, boo
   }
   case GoogleAsyncTag::Operation::Read: {
     ASSERT(ok);
-    std::vector<grpc::Slice> slices;
-    // Assuming this only fails due to OOM.
-    RELEASE_ASSERT(read_buf_.Dump(&slices).ok());
-    // TODO(htuch): As with PendingMessage serialization, the deserialization
-    // here is not optimal, as we are converting between string representation
-    // and have unnecessary copies. We should use ParseFromCodedStream as done
-    // by TensorFlow
-    // https://github.com/tensorflow/tensorflow/blob/f9462e82ac3981d7a3b5bf392477a585fb6e6912/tensorflow/core/distributed_runtime/rpc/grpc_serialization_traits.h#L210
-    // at the cost of some additional implementation complexity.
-    // Also see
-    // https://github.com/grpc/grpc/blob/5e82dddc056bd488e0ba1ba0057247ab23e442d4/include/grpc%2B%2B/impl/codegen/proto_utils.h#L113
-    // which gives us what we want for zero copy, but relies on grpc::internal details; we can't get
-    // a grpc_byte_buffer from grpc::ByteBuffer to use this.
-    grpc::string buf;
-    buf.reserve(read_buf_.Length());
-    for (const auto& slice : slices) {
-      buf.append(reinterpret_cast<const char*>(slice.begin()), slice.size());
-    }
     ProtobufTypes::MessagePtr response = callbacks_.createEmptyResponse();
-    if (!response->ParseFromString(buf)) {
-      // This is basically streamError in Grpc::AsyncClientImpl.
-      notifyRemoteClose(Status::GrpcStatus::Internal, nullptr, EMPTY_STRING);
-      resetStream();
-      break;
-    };
+    {
+      // reader must be destructed before we queue up read_buf_ for the next
+      // Read op, otherwise we can race between this thread in the reader
+      // destructor and the gRPC op thread.
+      grpc::ProtoBufferReader reader(&read_buf_);
+      if (!response->ParseFromZeroCopyStream(&reader)) {
+        // This is basically streamError in Grpc::AsyncClientImpl.
+        notifyRemoteClose(Status::GrpcStatus::Internal, nullptr, EMPTY_STRING);
+        resetStream();
+        break;
+      };
+    }
     callbacks_.onReceiveMessageUntyped(std::move(response));
     rw_->Read(&read_buf_, &read_tag_);
     ++inflight_tags_;
@@ -359,7 +332,7 @@ void GoogleAsyncStreamImpl::handleOpCompletion(GoogleAsyncTag::Operation op, boo
     break;
   }
   default:
-    NOT_REACHED;
+    NOT_REACHED_GCOVR_EXCL_LINE;
   }
 }
 

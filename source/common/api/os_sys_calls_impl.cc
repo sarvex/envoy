@@ -11,6 +11,10 @@ int OsSysCallsImpl::bind(int sockfd, const sockaddr* addr, socklen_t addrlen) {
   return ::bind(sockfd, addr, addrlen);
 }
 
+int OsSysCallsImpl::ioctl(int sockfd, unsigned long int request, void* argp) {
+  return ::ioctl(sockfd, request, argp);
+}
+
 int OsSysCallsImpl::open(const std::string& full_path, int flags, int mode) {
   return ::open(full_path.c_str(), flags, mode);
 }
@@ -19,6 +23,14 @@ int OsSysCallsImpl::close(int fd) { return ::close(fd); }
 
 ssize_t OsSysCallsImpl::write(int fd, const void* buffer, size_t num_bytes) {
   return ::write(fd, buffer, num_bytes);
+}
+
+ssize_t OsSysCallsImpl::writev(int fd, const iovec* iovec, int num_iovec) {
+  return ::writev(fd, iovec, num_iovec);
+}
+
+ssize_t OsSysCallsImpl::readv(int fd, const iovec* iovec, int num_iovec) {
+  return ::readv(fd, iovec, num_iovec);
 }
 
 ssize_t OsSysCallsImpl::recv(int socket, void* buffer, size_t length, int flags) {

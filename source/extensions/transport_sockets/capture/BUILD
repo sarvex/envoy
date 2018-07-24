@@ -1,4 +1,5 @@
 licenses(["notice"])  # Apache 2
+
 # Capture wrapper around raw_buffer sockets.
 
 load(
@@ -20,7 +21,7 @@ envoy_cc_library(
         "//source/common/network:utility_lib",
         "//source/common/protobuf",
         "@envoy_api//envoy/config/transport_socket/capture/v2alpha:capture_cc",
-        "@envoy_api//envoy/extensions/common/tap/v2alpha:capture_cc",
+        "@envoy_api//envoy/data/tap/v2alpha:capture_cc",
     ],
 )
 

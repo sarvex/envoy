@@ -25,6 +25,9 @@ envoy_cc_test(
 envoy_cc_test(
     name = "configuration_impl_test",
     srcs = ["configuration_impl_test.cc"],
+    data = [
+        "//test/config/integration/certs",
+    ],
     deps = [
         "//source/common/event:dispatcher_lib",
         "//source/common/upstream:cluster_manager_lib",
@@ -49,6 +52,7 @@ envoy_cc_test(
         "//source/server:connection_handler_lib",
         "//test/mocks/network:network_mocks",
         "//test/mocks/server:server_mocks",
+        "//test/test_common:network_utility_lib",
     ],
 )
 
@@ -102,6 +106,7 @@ envoy_cc_test(
     srcs = ["options_impl_test.cc"],
     deps = [
         "//source/common/common:utility_lib",
+        "//source/common/stats:stats_lib",
         "//source/server:options_lib",
         "//test/test_common:utility_lib",
     ],
@@ -135,7 +140,9 @@ envoy_cc_test(
         "//source/common/network:listen_socket_lib",
         "//source/common/network:socket_option_lib",
         "//source/common/network:utility_lib",
+        "//source/common/ssl:ssl_socket_lib",
         "//source/extensions/filters/listener/original_dst:config",
+        "//source/extensions/filters/listener/tls_inspector:config",
         "//source/extensions/filters/network/http_connection_manager:config",
         "//source/extensions/transport_sockets/raw_buffer:config",
         "//source/extensions/transport_sockets/ssl:config",
@@ -154,6 +161,7 @@ envoy_cc_fuzz_test(
     corpus = "server_corpus",
     deps = [
         "//source/common/thread_local:thread_local_lib",
+        "//source/server:proto_descriptors_lib",
         "//source/server:server_lib",
         "//test/integration:integration_lib",
         "//test/mocks/server:server_mocks",
@@ -167,6 +175,7 @@ envoy_cc_test(
     srcs = ["server_test.cc"],
     data = [
         ":cluster_dupe_bootstrap.yaml",
+        ":cluster_health_check_bootstrap.yaml",
         ":empty_bootstrap.yaml",
         ":node_bootstrap.yaml",
         "//test/config/integration:server.json",

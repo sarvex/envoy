@@ -10,6 +10,7 @@
 #include "envoy/http/message.h"
 #include "envoy/stats/stats.h"
 
+#include "common/grpc/status.h"
 #include "common/protobuf/protobuf.h"
 
 #include "absl/types/optional.h"
@@ -57,19 +58,22 @@ public:
   static std::string getGrpcMessage(const Http::HeaderMap& trailers);
 
   /**
-   * Returns the gRPC status code from a given HTTP response status code. Ordinarily, it is expected
-   * that a 200 response is provided, but gRPC defines a mapping for intermediaries that are not
-   * gRPC aware, see https://github.com/grpc/grpc/blob/master/doc/http-grpc-status-mapping.md.
-   * @param http_response_status HTTP status code.
-   * @return Status::GrpcStatus corresponding gRPC status code.
+   * Parse gRPC header 'grpc-timeout' value to a duration in milliseconds.
+   * @param request_headers the header map from which to extract the value of 'grpc-timeout' header.
+   *        If this header is missing the timeout corresponds to infinity. The header is encoded in
+   *        maximum of 8 decimal digits and a char for the unit.
+   * @return std::chrono::milliseconds the duration in milliseconds. A zero value corresponding to
+   *         infinity is returned if 'grpc-timeout' is missing or malformed.
    */
-  static Status::GrpcStatus httpToGrpcStatus(uint64_t http_response_status);
+  static std::chrono::milliseconds getGrpcTimeout(Http::HeaderMap& request_headers);
 
   /**
-   * @param grpc_status gRPC status from grpc-status header.
-   * @return uint64_t the canonical HTTP status code corresponding to a gRPC status code.
+   * Encode 'timeout' into 'grpc-timeout' format.
+   * @param timeout the duration in std::chrono::milliseconds.
+   * @param value the HeaderString onto which format the timeout in 'grpc-timeout' format, upto
+   *        8 decimal digits and a letter indicating the unit.
    */
-  static uint64_t grpcToHttpStatus(Status::GrpcStatus grpc_status);
+  static void toGrpcTimeout(const std::chrono::milliseconds& timeout, Http::HeaderString& value);
 
   /**
    * Charge a success/failure stat to a cluster/service/method.
@@ -125,7 +129,8 @@ public:
    */
   static Http::MessagePtr prepareHeaders(const std::string& upstream_cluster,
                                          const std::string& service_full_name,
-                                         const std::string& method_name);
+                                         const std::string& method_name,
+                                         const absl::optional<std::chrono::milliseconds>& timeout);
 
   /**
    * Basic validation of gRPC response, @throws Grpc::Exception in case of non successful response.

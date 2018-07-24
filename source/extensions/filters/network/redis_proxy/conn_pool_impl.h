@@ -158,7 +158,7 @@ private:
     Event::Dispatcher& dispatcher_;
     Upstream::ThreadLocalCluster* cluster_;
     std::unordered_map<Upstream::HostConstSharedPtr, ThreadLocalActiveClientPtr> client_map_;
-    Common::CallbackHandle* local_host_set_member_update_cb_handle_;
+    Envoy::Common::CallbackHandle* local_host_set_member_update_cb_handle_;
   };
 
   struct LbContextImpl : public Upstream::LoadBalancerContext {
@@ -168,6 +168,7 @@ private:
     absl::optional<uint64_t> computeHashKey() override { return hash_key_; }
     const Router::MetadataMatchCriteria* metadataMatchCriteria() override { return nullptr; }
     const Network::Connection* downstreamConnection() const override { return nullptr; }
+    const Http::HeaderMap* downstreamHeaders() const override { return nullptr; }
 
     const absl::optional<uint64_t> hash_key_;
   };

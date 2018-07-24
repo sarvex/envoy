@@ -4,7 +4,6 @@
 #include <chrono>
 #include <cstdint>
 #include <list>
-#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -80,9 +79,10 @@ public:
   const HistogramStatistics& cumulativeStatistics() const override {
     return cumulative_statistics_;
   }
+  const std::string summary() const override;
 
 private:
-  bool usedLockHeld() const;
+  bool usedLockHeld() const EXCLUSIVE_LOCKS_REQUIRED(merge_lock_);
 
   Store& parent_;
   TlsScope& tls_scope_;
@@ -90,8 +90,9 @@ private:
   histogram_t* cumulative_histogram_;
   HistogramStatisticsImpl interval_statistics_;
   HistogramStatisticsImpl cumulative_statistics_;
-  mutable std::mutex merge_lock_;
-  std::list<TlsHistogramSharedPtr> tls_histograms_;
+  mutable Thread::MutexBasicLockable merge_lock_;
+  std::list<TlsHistogramSharedPtr> tls_histograms_ GUARDED_BY(merge_lock_);
+  bool merged_;
 };
 
 typedef std::shared_ptr<ParentHistogramImpl> ParentHistogramImplSharedPtr;
@@ -162,7 +163,7 @@ public:
  */
 class ThreadLocalStoreImpl : Logger::Loggable<Logger::Id::stats>, public StoreRoot {
 public:
-  ThreadLocalStoreImpl(RawStatDataAllocator& alloc);
+  ThreadLocalStoreImpl(const Stats::StatsOptions& stats_options, StatDataAllocator& alloc);
   ~ThreadLocalStoreImpl();
 
   // Stats::Scope
@@ -177,11 +178,9 @@ public:
   };
 
   // Stats::Store
-  // TODO(ramaraochavali): Consider changing the implementation of these methods to use vectors and
-  // use std::sort, rather than inserting into a map and pulling it out for better performance.
-  std::list<CounterSharedPtr> counters() const override;
-  std::list<GaugeSharedPtr> gauges() const override;
-  std::list<ParentHistogramSharedPtr> histograms() const override;
+  std::vector<CounterSharedPtr> counters() const override;
+  std::vector<GaugeSharedPtr> gauges() const override;
+  std::vector<ParentHistogramSharedPtr> histograms() const override;
 
   // Stats::StoreRoot
   void addSink(Sink& sink) override { timer_sinks_.push_back(sink); }
@@ -193,6 +192,10 @@ public:
   void shutdownThreading() override;
 
   void mergeHistograms(PostMergeCb mergeCb) override;
+
+  Source& source() override { return source_; }
+
+  const Stats::StatsOptions& statsOptions() const override { return stats_options_; }
 
 private:
   struct TlsCacheEntry {
@@ -223,6 +226,30 @@ private:
     Gauge& gauge(const std::string& name) override;
     Histogram& histogram(const std::string& name) override;
     Histogram& tlsHistogram(const std::string& name, ParentHistogramImpl& parent) override;
+    const Stats::StatsOptions& statsOptions() const override { return parent_.statsOptions(); }
+
+    template <class StatType>
+    using MakeStatFn =
+        std::function<std::shared_ptr<StatType>(StatDataAllocator&, const std::string& name,
+                                                std::string&& tag_extracted_name,
+                                                std::vector<Tag>&& tags)>;
+
+    /**
+     * Makes a stat either by looking it up in the central cache,
+     * generating it from the the parent allocator, or as a last
+     * result, creating it with the heap allocator.
+     *
+     * @param name the full name of the stat (not tag extracted).
+     * @param central_cache_map a map from name to the desired object in the central cache.
+     * @param make_stat a function to generate the stat object, called if it's not in cache.
+     * @param tls_ref possibly null reference to a cache entry for this stat, which will be
+     *     used if non-empty, or filled in if empty (and non-null).
+     */
+    template <class StatType>
+    StatType&
+    safeMakeStat(const std::string& name,
+                 std::unordered_map<std::string, std::shared_ptr<StatType>>& central_cache_map,
+                 MakeStatFn<StatType> make_stat, std::shared_ptr<StatType>* tls_ref);
 
     static std::atomic<uint64_t> next_scope_id_;
 
@@ -243,22 +270,17 @@ private:
     std::unordered_map<uint64_t, TlsCacheEntry> scope_cache_;
   };
 
-  struct SafeAllocData {
-    RawStatData& data_;
-    RawStatDataAllocator& free_;
-  };
-
   std::string getTagsForName(const std::string& name, std::vector<Tag>& tags) const;
   void clearScopeFromCaches(uint64_t scope_id);
   void releaseScopeCrossThread(ScopeImpl* scope);
-  SafeAllocData safeAlloc(const std::string& name);
   void mergeInternal(PostMergeCb mergeCb);
 
-  RawStatDataAllocator& alloc_;
+  const Stats::StatsOptions& stats_options_;
+  StatDataAllocator& alloc_;
   Event::Dispatcher* main_thread_dispatcher_{};
   ThreadLocal::SlotPtr tls_;
-  mutable std::mutex lock_;
-  std::unordered_set<ScopeImpl*> scopes_;
+  mutable Thread::MutexBasicLockable lock_;
+  std::unordered_set<ScopeImpl*> scopes_ GUARDED_BY(lock_);
   ScopePtr default_scope_;
   std::list<std::reference_wrapper<Sink>> timer_sinks_;
   TagProducerPtr tag_producer_;
@@ -266,6 +288,7 @@ private:
   std::atomic<bool> merge_in_progress_{};
   Counter& num_last_resort_stats_;
   HeapRawStatDataAllocator heap_allocator_;
+  SourceImpl source_;
 };
 
 } // namespace Stats

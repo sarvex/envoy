@@ -39,6 +39,12 @@ public:
   virtual const std::string& sha256PeerCertificateDigest() const PURE;
 
   /**
+   * @return std::string the serial number field of the peer certificate. Returns "" if
+   *         there is no peer certificate, or no serial number.
+   **/
+  virtual std::string serialNumberPeerCertificate() const PURE;
+
+  /**
    * @return std::string the subject field of the peer certificate in RFC 2253 format. Returns "" if
    *         there is no peer certificate, or no subject.
    **/
@@ -48,7 +54,7 @@ public:
    * @return std::string the URI in the SAN field of the peer certificate. Returns "" if there is no
    *         peer certificate, or no SAN field, or no URI.
    **/
-  virtual std::string uriSanPeerCertificate() PURE;
+  virtual std::string uriSanPeerCertificate() const PURE;
 
   /**
    * @return std::string the URL-encoded PEM-encoded representation of the peer certificate. Returns

@@ -24,6 +24,7 @@ const uint32_t RetryPolicy::RETRY_ON_RETRIABLE_4XX;
 const uint32_t RetryPolicy::RETRY_ON_GRPC_CANCELLED;
 const uint32_t RetryPolicy::RETRY_ON_GRPC_DEADLINE_EXCEEDED;
 const uint32_t RetryPolicy::RETRY_ON_GRPC_RESOURCE_EXHAUSTED;
+const uint32_t RetryPolicy::RETRY_ON_GRPC_UNAVAILABLE;
 
 RetryStatePtr RetryStateImpl::create(const RetryPolicy& route_policy,
                                      Http::HeaderMap& request_headers,
@@ -70,22 +71,20 @@ RetryStateImpl::RetryStateImpl(const RetryPolicy& route_policy, Http::HeaderMap&
   // Merge in the route policy.
   retry_on_ |= route_policy.retryOn();
   retries_remaining_ = std::max(retries_remaining_, route_policy.numRetries());
+  const uint32_t base = runtime_.snapshot().getInteger("upstream.base_retry_backoff_ms", 25);
+  // Cap the max interval to 10 times the base interval to ensure reasonable backoff intervals.
+  backoff_strategy_ = std::make_unique<JitteredBackOffStrategy>(base, base * 10, random_);
 }
 
 RetryStateImpl::~RetryStateImpl() { resetRetry(); }
 
 void RetryStateImpl::enableBackoffTimer() {
-  // We use a fully jittered exponential backoff algorithm.
-  current_retry_++;
-  uint32_t multiplier = (1 << current_retry_) - 1;
-  uint64_t base = runtime_.snapshot().getInteger("upstream.base_retry_backoff_ms", 25);
-  uint64_t timeout = random_.random() % (base * multiplier);
-
   if (!retry_timer_) {
     retry_timer_ = dispatcher_.createTimer([this]() -> void { callback_(); });
   }
 
-  retry_timer_->enableTimer(std::chrono::milliseconds(timeout));
+  // We use a fully jittered exponential backoff algorithm.
+  retry_timer_->enableTimer(std::chrono::milliseconds(backoff_strategy_->nextBackOffMs()));
 }
 
 uint32_t RetryStateImpl::parseRetryOn(absl::string_view config) {
@@ -116,6 +115,8 @@ uint32_t RetryStateImpl::parseRetryGrpcOn(absl::string_view retry_grpc_on_header
       ret |= RetryPolicy::RETRY_ON_GRPC_DEADLINE_EXCEEDED;
     } else if (retry_on == Http::Headers::get().EnvoyRetryOnGrpcValues.ResourceExhausted) {
       ret |= RetryPolicy::RETRY_ON_GRPC_RESOURCE_EXHAUSTED;
+    } else if (retry_on == Http::Headers::get().EnvoyRetryOnGrpcValues.Unavailable) {
+      ret |= RetryPolicy::RETRY_ON_GRPC_UNAVAILABLE;
     }
   }
 
@@ -215,7 +216,8 @@ bool RetryStateImpl::wouldRetry(const Http::HeaderMap* response_headers,
 
   if (retry_on_ &
           (RetryPolicy::RETRY_ON_GRPC_CANCELLED | RetryPolicy::RETRY_ON_GRPC_DEADLINE_EXCEEDED |
-           RetryPolicy::RETRY_ON_GRPC_RESOURCE_EXHAUSTED) &&
+           RetryPolicy::RETRY_ON_GRPC_RESOURCE_EXHAUSTED |
+           RetryPolicy::RETRY_ON_GRPC_UNAVAILABLE) &&
       response_headers) {
     absl::optional<Grpc::Status::GrpcStatus> status =
         Grpc::Common::getGrpcStatus(*response_headers);
@@ -225,7 +227,9 @@ bool RetryStateImpl::wouldRetry(const Http::HeaderMap* response_headers,
           (status.value() == Grpc::Status::DeadlineExceeded &&
            (retry_on_ & RetryPolicy::RETRY_ON_GRPC_DEADLINE_EXCEEDED)) ||
           (status.value() == Grpc::Status::ResourceExhausted &&
-           (retry_on_ & RetryPolicy::RETRY_ON_GRPC_RESOURCE_EXHAUSTED))) {
+           (retry_on_ & RetryPolicy::RETRY_ON_GRPC_RESOURCE_EXHAUSTED)) ||
+          (status.value() == Grpc::Status::Unavailable &&
+           (retry_on_ & RetryPolicy::RETRY_ON_GRPC_UNAVAILABLE))) {
         return true;
       }
     }

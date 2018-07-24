@@ -46,7 +46,7 @@ public:
   /**
    * @return host specific counters.
    */
-  virtual std::list<Stats::CounterSharedPtr> counters() const PURE;
+  virtual std::vector<Stats::CounterSharedPtr> counters() const PURE;
 
   /**
    * Create a connection for this host.
@@ -73,7 +73,7 @@ public:
   /**
    * @return host specific gauges.
    */
-  virtual std::list<Stats::GaugeSharedPtr> gauges() const PURE;
+  virtual std::vector<Stats::GaugeSharedPtr> gauges() const PURE;
 
   /**
    * Atomically clear a health flag for a host. Flags are specified in HealthFlags.
@@ -304,6 +304,7 @@ public:
   COUNTER  (lb_subsets_removed)                                                                    \
   COUNTER  (lb_subsets_selected)                                                                   \
   COUNTER  (lb_subsets_fallback)                                                                   \
+  COUNTER  (original_dst_host_invalid)                                                             \
   COUNTER  (upstream_cx_total)                                                                     \
   GAUGE    (upstream_cx_active)                                                                    \
   COUNTER  (upstream_cx_http1_total)                                                               \

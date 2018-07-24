@@ -36,6 +36,17 @@ Config::Config(Stats::Scope& scope, uint32_t max_client_hello_size)
 
   SSL_CTX_set_options(ssl_ctx_.get(), SSL_OP_NO_TICKET);
   SSL_CTX_set_session_cache_mode(ssl_ctx_.get(), SSL_SESS_CACHE_OFF);
+  SSL_CTX_set_select_certificate_cb(
+      ssl_ctx_.get(), [](const SSL_CLIENT_HELLO* client_hello) -> ssl_select_cert_result_t {
+        const uint8_t* data;
+        size_t len;
+        if (SSL_early_callback_ctx_extension_get(
+                client_hello, TLSEXT_TYPE_application_layer_protocol_negotiation, &data, &len)) {
+          Filter* filter = static_cast<Filter*>(SSL_get_app_data(client_hello->ssl));
+          filter->onALPN(data, len);
+        }
+        return ssl_select_cert_success;
+      });
   SSL_CTX_set_tlsext_servername_callback(
       ssl_ctx_.get(), [](SSL* ssl, int* out_alert, void*) -> int {
         Filter* filter = static_cast<Filter*>(SSL_get_app_data(ssl));
@@ -52,7 +63,7 @@ bssl::UniquePtr<SSL> Config::newSsl() { return bssl::UniquePtr<SSL>{SSL_new(ssl_
 thread_local uint8_t Filter::buf_[Config::TLS_MAX_CLIENT_HELLO];
 
 Filter::Filter(const ConfigSharedPtr config) : config_(config), ssl_(config_->newSsl()) {
-  RELEASE_ASSERT(sizeof(buf_) >= config_->maxClientHelloSize());
+  RELEASE_ASSERT(sizeof(buf_) >= config_->maxClientHelloSize(), "");
 
   SSL_set_app_data(ssl_.get(), this);
   SSL_set_accept_state(ssl_.get());
@@ -88,6 +99,26 @@ Network::FilterStatus Filter::onAccept(Network::ListenerFilterCallbacks& cb) {
   return Network::FilterStatus::StopIteration;
 }
 
+void Filter::onALPN(const unsigned char* data, unsigned int len) {
+  CBS wire, list;
+  CBS_init(&wire, reinterpret_cast<const uint8_t*>(data), static_cast<size_t>(len));
+  if (!CBS_get_u16_length_prefixed(&wire, &list) || CBS_len(&wire) != 0 || CBS_len(&list) < 2) {
+    // Don't produce errors, let the real TLS stack do it.
+    return;
+  }
+  CBS name;
+  std::vector<absl::string_view> protocols;
+  while (CBS_len(&list) > 0) {
+    if (!CBS_get_u8_length_prefixed(&list, &name) || CBS_len(&name) == 0) {
+      // Don't produce errors, let the real TLS stack do it.
+      return;
+    }
+    protocols.emplace_back(reinterpret_cast<const char*>(CBS_data(&name)), CBS_len(&name));
+  }
+  cb_->socket().setRequestedApplicationProtocols(protocols);
+  alpn_found_ = true;
+}
+
 void Filter::onServername(absl::string_view name) {
   if (!name.empty()) {
     config_->stats().sni_found_.inc();
@@ -113,9 +144,10 @@ void Filter::onRead() {
   // platforms.
   auto& os_syscalls = Api::OsSysCallsSingleton::get();
   ssize_t n = os_syscalls.recv(cb_->socket().fd(), buf_, config_->maxClientHelloSize(), MSG_PEEK);
+  const int error = errno; // Latch errno right after the recv call.
   ENVOY_LOG(trace, "tls inspector: recv: {}", n);
 
-  if (n == -1 && errno == EAGAIN) {
+  if (n == -1 && error == EAGAIN) {
     return;
   } else if (n < 0) {
     config_->stats().read_error_.inc();
@@ -173,7 +205,12 @@ void Filter::parseClientHello(const void* data, size_t len) {
   case SSL_ERROR_SSL:
     if (clienthello_success_) {
       config_->stats().tls_found_.inc();
-      cb_->socket().setDetectedTransportProtocol(TransportSockets::TransportSocketNames::get().SSL);
+      if (alpn_found_) {
+        config_->stats().alpn_found_.inc();
+      } else {
+        config_->stats().alpn_not_found_.inc();
+      }
+      cb_->socket().setDetectedTransportProtocol(TransportSockets::TransportSocketNames::get().Tls);
     } else {
       config_->stats().tls_not_found_.inc();
     }

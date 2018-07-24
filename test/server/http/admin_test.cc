@@ -7,6 +7,8 @@
 #include "common/http/message_impl.h"
 #include "common/json/json_loader.h"
 #include "common/profiler/profiler.h"
+#include "common/protobuf/protobuf.h"
+#include "common/protobuf/utility.h"
 #include "common/stats/stats_impl.h"
 #include "common/stats/thread_local_store.h"
 
@@ -24,10 +26,14 @@
 #include "gmock/gmock.h"
 #include "gtest/gtest.h"
 
+using testing::HasSubstr;
 using testing::InSequence;
 using testing::Invoke;
 using testing::NiceMock;
 using testing::Ref;
+using testing::Return;
+using testing::ReturnPointee;
+using testing::ReturnRef;
 using testing::_;
 
 namespace Envoy {
@@ -47,14 +53,15 @@ public:
     }));
 
     EXPECT_CALL(*this, alloc("stats.overflow"));
-    store_.reset(new Stats::ThreadLocalStoreImpl(*this));
+    store_ = std::make_unique<Stats::ThreadLocalStoreImpl>(options_, *this);
     store_->addSink(sink_);
   }
 
   static std::string
   statsAsJsonHandler(std::map<std::string, uint64_t>& all_stats,
-                     const std::list<Stats::ParentHistogramSharedPtr>& all_histograms) {
-    return AdminImpl::statsAsJson(all_stats, all_histograms, true);
+                     const std::vector<Stats::ParentHistogramSharedPtr>& all_histograms,
+                     const bool used_only) {
+    return AdminImpl::statsAsJson(all_stats, all_histograms, used_only, true);
   }
 
   MOCK_METHOD1(alloc, Stats::RawStatData*(const std::string& name));
@@ -64,6 +71,7 @@ public:
   NiceMock<ThreadLocal::MockInstance> tls_;
   Stats::TestAllocator alloc_;
   Stats::MockSink sink_;
+  Stats::StatsOptionsImpl options_;
   std::unique_ptr<Stats::ThreadLocalStoreImpl> store_;
 };
 
@@ -117,7 +125,7 @@ TEST_P(AdminStatsTest, StatsAsJson) {
 
   std::map<std::string, uint64_t> all_stats;
 
-  std::string actual_json = statsAsJsonHandler(all_stats, store_->histograms());
+  std::string actual_json = statsAsJsonHandler(all_stats, store_->histograms(), false);
 
   const std::string expected_json = R"EOF({
     "stats": [
@@ -227,6 +235,102 @@ TEST_P(AdminStatsTest, StatsAsJson) {
   store_->shutdownThreading();
 }
 
+TEST_P(AdminStatsTest, UsedOnlyStatsAsJson) {
+  InSequence s;
+  store_->initializeThreading(main_thread_dispatcher_, tls_);
+
+  Stats::Histogram& h1 = store_->histogram("h1");
+  Stats::Histogram& h2 = store_->histogram("h2");
+
+  EXPECT_EQ("h1", h1.name());
+  EXPECT_EQ("h2", h2.name());
+
+  EXPECT_CALL(sink_, onHistogramComplete(Ref(h1), 200));
+  h1.recordValue(200);
+
+  store_->mergeHistograms([]() -> void {});
+
+  // Again record a new value in h1 so that it has both interval and cumulative values.
+  // h2 should only have cumulative values.
+  EXPECT_CALL(sink_, onHistogramComplete(Ref(h1), 100));
+  h1.recordValue(100);
+
+  store_->mergeHistograms([]() -> void {});
+
+  EXPECT_CALL(*this, free(_));
+
+  std::map<std::string, uint64_t> all_stats;
+
+  std::string actual_json = statsAsJsonHandler(all_stats, store_->histograms(), false);
+
+  // Expected JSON should not have h2 values as it is not used.
+  const std::string expected_json = R"EOF({
+    "stats": [
+        {
+            "histograms": {
+                "supported_quantiles": [
+                    0.0,
+                    25.0,
+                    50.0,
+                    75.0,
+                    90.0,
+                    95.0,
+                    99.0,
+                    99.9,
+                    100.0
+                ],
+                "computed_quantiles": [
+                    {
+                        "name": "h1",
+                        "values": [
+                            {
+                                "interval": 100.0,
+                                "cumulative": 100.0
+                            },
+                            {
+                                "interval": 102.5,
+                                "cumulative": 105.0
+                            },
+                            {
+                                "interval": 105.0,
+                                "cumulative": 110.0
+                            },
+                            {
+                                "interval": 107.5,
+                                "cumulative": 205.0
+                            },
+                            {
+                                "interval": 109.0,
+                                "cumulative": 208.0
+                            },
+                            {
+                                "interval": 109.5,
+                                "cumulative": 209.0
+                            },
+                            {
+                                "interval": 109.9,
+                                "cumulative": 209.8
+                            },
+                            {
+                                "interval": 109.99,
+                                "cumulative": 209.98
+                            },
+                            {
+                                "interval": 110.0,
+                                "cumulative": 210.0
+                            }
+                        ]
+                    }
+                ]
+            }
+        }
+    ]
+})EOF";
+
+  EXPECT_EQ(expected_json, actual_json);
+  store_->shutdownThreading();
+}
+
 INSTANTIATE_TEST_CASE_P(IpVersions, AdminFilterTest,
                         testing::ValuesIn(TestEnvironment::getIpVersionsForTest()),
                         TestUtility::ipTestParamsToString);
@@ -259,7 +363,7 @@ public:
         admin_("/dev/null", cpu_profile_path_, address_out_path_,
                Network::Test::getCanonicalLoopbackAddress(GetParam()), server_,
                listener_scope_.createScope("listener.admin.")),
-        request_headers_{{":path", "/"}} {
+        request_headers_{{":path", "/"}}, admin_filter_(admin_) {
 
     EXPECT_EQ(std::chrono::milliseconds(100), admin_.drainTimeout());
     admin_.tracingStats().random_sampling_.inc();
@@ -269,7 +373,8 @@ public:
   Http::Code runCallback(absl::string_view path_and_query, Http::HeaderMap& response_headers,
                          Buffer::Instance& response, absl::string_view method) {
     request_headers_.insertMethod().value(method.data(), method.size());
-    return admin_.runCallback(path_and_query, request_headers_, response_headers, response);
+    admin_filter_.decodeHeaders(request_headers_, false);
+    return admin_.runCallback(path_and_query, response_headers, response, admin_filter_);
   }
 
   Http::Code getCallback(absl::string_view path_and_query, Http::HeaderMap& response_headers,
@@ -290,6 +395,7 @@ public:
   Stats::IsolatedStoreImpl listener_scope_;
   AdminImpl admin_;
   Http::TestHeaderMapImpl request_headers_;
+  Server::AdminFilter admin_filter_;
 };
 
 INSTANTIATE_TEST_CASE_P(IpVersions, AdminInstanceTest,
@@ -331,9 +437,10 @@ TEST_P(AdminInstanceTest, AdminBadProfiler) {
   Http::HeaderMapImpl header_map;
   const absl::string_view post = Http::Headers::get().MethodValues.Post;
   request_headers_.insertMethod().value(post.data(), post.size());
+  admin_filter_.decodeHeaders(request_headers_, false);
   EXPECT_NO_LOGS(EXPECT_EQ(Http::Code::InternalServerError,
-                           admin_bad_profile_path.runCallback("/cpuprofiler?enable=y",
-                                                              request_headers_, header_map, data)));
+                           admin_bad_profile_path.runCallback("/cpuprofiler?enable=y", header_map,
+                                                              data, admin_filter_)));
   EXPECT_FALSE(Profiler::Cpu::profilerEnabled());
 }
 
@@ -357,9 +464,8 @@ TEST_P(AdminInstanceTest, AdminBadAddressOutPath) {
 }
 
 TEST_P(AdminInstanceTest, CustomHandler) {
-  auto callback = [](absl::string_view, Http::HeaderMap&, Buffer::Instance&) -> Http::Code {
-    return Http::Code::Accepted;
-  };
+  auto callback = [](absl::string_view, Http::HeaderMap&, Buffer::Instance&,
+                     AdminStream&) -> Http::Code { return Http::Code::Accepted; };
 
   // Test removable handler.
   EXPECT_NO_LOGS(EXPECT_TRUE(admin_.addHandler("/foo/bar", "hello", callback, true, false)));
@@ -385,9 +491,8 @@ TEST_P(AdminInstanceTest, CustomHandler) {
 }
 
 TEST_P(AdminInstanceTest, RejectHandlerWithXss) {
-  auto callback = [](absl::string_view, Http::HeaderMap&, Buffer::Instance&) -> Http::Code {
-    return Http::Code::Accepted;
-  };
+  auto callback = [](absl::string_view, Http::HeaderMap&, Buffer::Instance&,
+                     AdminStream&) -> Http::Code { return Http::Code::Accepted; };
   EXPECT_LOG_CONTAINS("error",
                       "filter \"/foo<script>alert('hi')</script>\" contains invalid character '<'",
                       EXPECT_FALSE(admin_.addHandler("/foo<script>alert('hi')</script>", "hello",
@@ -395,9 +500,8 @@ TEST_P(AdminInstanceTest, RejectHandlerWithXss) {
 }
 
 TEST_P(AdminInstanceTest, RejectHandlerWithEmbeddedQuery) {
-  auto callback = [](absl::string_view, Http::HeaderMap&, Buffer::Instance&) -> Http::Code {
-    return Http::Code::Accepted;
-  };
+  auto callback = [](absl::string_view, Http::HeaderMap&, Buffer::Instance&,
+                     AdminStream&) -> Http::Code { return Http::Code::Accepted; };
   EXPECT_LOG_CONTAINS("error",
                       "filter \"/bar?queryShouldNotBeInPrefix\" contains invalid character '?'",
                       EXPECT_FALSE(admin_.addHandler("/bar?queryShouldNotBeInPrefix", "hello",
@@ -405,9 +509,8 @@ TEST_P(AdminInstanceTest, RejectHandlerWithEmbeddedQuery) {
 }
 
 TEST_P(AdminInstanceTest, EscapeHelpTextWithPunctuation) {
-  auto callback = [](absl::string_view, Http::HeaderMap&, Buffer::Instance&) -> Http::Code {
-    return Http::Code::Accepted;
-  };
+  auto callback = [](absl::string_view, Http::HeaderMap&, Buffer::Instance&,
+                     AdminStream&) -> Http::Code { return Http::Code::Accepted; };
 
   // It's OK to have help text with HTML characters in it, but when we render the home
   // page they need to be escaped.
@@ -418,7 +521,7 @@ TEST_P(AdminInstanceTest, EscapeHelpTextWithPunctuation) {
   Buffer::OwnedImpl response;
   EXPECT_EQ(Http::Code::OK, getCallback("/", header_map, response));
   Http::HeaderString& content_type = header_map.ContentType()->value();
-  EXPECT_TRUE(content_type.find("text/html")) << content_type.c_str();
+  EXPECT_THAT(std::string(content_type.getStringView()), testing::HasSubstr("text/html"));
   EXPECT_EQ(-1, response.search(planets.data(), planets.size(), 0));
   const std::string escaped_planets = "jupiter&gt;saturn&gt;mars";
   EXPECT_NE(-1, response.search(escaped_planets.data(), escaped_planets.size(), 0));
@@ -452,7 +555,7 @@ TEST_P(AdminInstanceTest, ConfigDump) {
 }
 )EOF";
   EXPECT_EQ(Http::Code::OK, getCallback("/config_dump", header_map, response));
-  std::string output = TestUtility::bufferToString(response);
+  std::string output = response.toString();
   EXPECT_EQ(expected_json, output);
 }
 
@@ -519,7 +622,7 @@ TEST_P(AdminInstanceTest, Runtime) {
   EXPECT_CALL(loader, snapshot()).WillRepeatedly(testing::ReturnPointee(&snapshot));
   EXPECT_CALL(server_, runtime()).WillRepeatedly(testing::ReturnPointee(&loader));
   EXPECT_EQ(Http::Code::OK, getCallback("/runtime", header_map, response));
-  EXPECT_EQ(expected_json, TestUtility::bufferToString(response));
+  EXPECT_EQ(expected_json, response.toString());
 }
 
 TEST_P(AdminInstanceTest, RuntimeModify) {
@@ -536,7 +639,7 @@ TEST_P(AdminInstanceTest, RuntimeModify) {
   EXPECT_CALL(loader, mergeValues(overrides)).Times(1);
   EXPECT_EQ(Http::Code::OK,
             getCallback("/runtime_modify?foo=bar&x=42&nothing=", header_map, response));
-  EXPECT_EQ("OK\n", TestUtility::bufferToString(response));
+  EXPECT_EQ("OK\n", response.toString());
 }
 
 TEST_P(AdminInstanceTest, RuntimeModifyNoArguments) {
@@ -544,7 +647,7 @@ TEST_P(AdminInstanceTest, RuntimeModifyNoArguments) {
   Buffer::OwnedImpl response;
 
   EXPECT_EQ(Http::Code::BadRequest, getCallback("/runtime_modify", header_map, response));
-  EXPECT_TRUE(absl::StartsWith(TestUtility::bufferToString(response), "usage:"));
+  EXPECT_TRUE(absl::StartsWith(response.toString(), "usage:"));
 }
 
 TEST_P(AdminInstanceTest, TracingStatsDisabled) {
@@ -554,139 +657,211 @@ TEST_P(AdminInstanceTest, TracingStatsDisabled) {
   }
 }
 
-TEST(PrometheusStatsFormatter, MetricName) {
+TEST_P(AdminInstanceTest, ClustersJson) {
+  Upstream::ClusterManager::ClusterInfoMap cluster_map;
+  ON_CALL(server_.cluster_manager_, clusters()).WillByDefault(ReturnPointee(&cluster_map));
+
+  NiceMock<Upstream::MockCluster> cluster;
+  cluster_map.emplace(cluster.info_->name_, cluster);
+
+  NiceMock<Upstream::Outlier::MockDetector> outlier_detector;
+  ON_CALL(Const(cluster), outlierDetector()).WillByDefault(Return(&outlier_detector));
+  ON_CALL(outlier_detector, successRateEjectionThreshold()).WillByDefault(Return(6.0));
+
+  ON_CALL(*cluster.info_, addedViaApi()).WillByDefault(Return(true));
+
+  Upstream::MockHostSet* host_set = cluster.priority_set_.getMockHostSet(0);
+  auto host = std::make_shared<NiceMock<Upstream::MockHost>>();
+
+  envoy::api::v2::core::Locality locality;
+  locality.set_region("test_region");
+  locality.set_zone("test_zone");
+  locality.set_sub_zone("test_sub_zone");
+  ON_CALL(*host, locality()).WillByDefault(ReturnRef(locality));
+
+  host_set->hosts_.emplace_back(host);
+  Network::Address::InstanceConstSharedPtr address =
+      Network::Utility::resolveUrl("tcp://1.2.3.4:80");
+  ON_CALL(*host, address()).WillByDefault(Return(address));
+
+  Stats::IsolatedStoreImpl store;
+  store.counter("test_counter").add(10);
+  store.gauge("test_gauge").set(11);
+  ON_CALL(*host, gauges()).WillByDefault(Invoke([&store]() { return store.gauges(); }));
+  ON_CALL(*host, counters()).WillByDefault(Invoke([&store]() { return store.counters(); }));
+
+  ON_CALL(*host, healthFlagGet(Upstream::Host::HealthFlag::FAILED_ACTIVE_HC))
+      .WillByDefault(Return(true));
+  ON_CALL(*host, healthFlagGet(Upstream::Host::HealthFlag::FAILED_OUTLIER_CHECK))
+      .WillByDefault(Return(true));
+  ON_CALL(*host, healthFlagGet(Upstream::Host::HealthFlag::FAILED_EDS_HEALTH))
+      .WillByDefault(Return(false));
+
+  ON_CALL(host->outlier_detector_, successRate()).WillByDefault(Return(43.2));
+
+  Buffer::OwnedImpl response;
+  Http::HeaderMapImpl header_map;
+  EXPECT_EQ(Http::Code::OK, getCallback("/clusters?format=json", header_map, response));
+  std::string output_json = response.toString();
+  envoy::admin::v2alpha::Clusters output_proto;
+  MessageUtil::loadFromJson(output_json, output_proto);
+
+  const std::string expected_json = R"EOF({
+ "cluster_statuses": [
+  {
+   "name": "fake_cluster",
+   "success_rate_ejection_threshold": {
+    "value": 6
+   },
+   "added_via_api": true,
+   "host_statuses": [
+    {
+     "address": {
+      "socket_address": {
+       "protocol": "TCP",
+       "address": "1.2.3.4",
+       "port_value": 80
+      }
+     },
+     "stats": {
+      "test_counter": {
+       "value": "10",
+       "type": "COUNTER"
+      },
+      "test_gauge": {
+       "value": "11",
+       "type": "GAUGE"
+      },
+     },
+     "health_status": {
+      "eds_health_status": "HEALTHY",
+      "failed_active_health_check": true,
+      "failed_outlier_check": true
+     },
+     "success_rate": {
+      "value": 43.2
+     }
+    }
+   ]
+  }
+ ]
+}
+)EOF";
+
+  envoy::admin::v2alpha::Clusters expected_proto;
+  MessageUtil::loadFromJson(expected_json, expected_proto);
+
+  // Ensure the protos created from each JSON are equivalent.
+  EXPECT_THAT(output_proto, ProtoEq(expected_proto));
+
+  // Ensure that the normal text format is used by default.
+  EXPECT_EQ(Http::Code::OK, getCallback("/clusters", header_map, response));
+  std::string text_output = response.toString();
+  envoy::admin::v2alpha::Clusters failed_conversion_proto;
+  EXPECT_THROW(MessageUtil::loadFromJson(text_output, failed_conversion_proto), EnvoyException);
+}
+
+TEST_P(AdminInstanceTest, GetRequest) {
+  Http::HeaderMapImpl response_headers;
+  std::string body;
+  EXPECT_EQ(Http::Code::OK, admin_.request("/server_info", Http::Utility::QueryParams(), "GET",
+                                           response_headers, body));
+  EXPECT_TRUE(absl::StartsWith(body, "envoy ")) << body;
+  EXPECT_THAT(std::string(response_headers.ContentType()->value().getStringView()),
+              HasSubstr("text/plain"));
+}
+
+TEST_P(AdminInstanceTest, GetRequestJson) {
+  Http::HeaderMapImpl response_headers;
+  std::string body;
+  EXPECT_EQ(Http::Code::OK,
+            admin_.request("/stats", Http::Utility::QueryParams({{"format", "json"}}), "GET",
+                           response_headers, body));
+  EXPECT_THAT(body, HasSubstr("{\"stats\":["));
+  EXPECT_THAT(std::string(response_headers.ContentType()->value().getStringView()),
+              HasSubstr("application/json"));
+}
+
+TEST_P(AdminInstanceTest, PostRequest) {
+  Http::HeaderMapImpl response_headers;
+  std::string body;
+  EXPECT_NO_LOGS(
+      EXPECT_EQ(Http::Code::OK, admin_.request("/healthcheck/fail", Http::Utility::QueryParams(),
+                                               "POST", response_headers, body)));
+  EXPECT_EQ(body, "OK\n");
+  EXPECT_THAT(std::string(response_headers.ContentType()->value().getStringView()),
+              HasSubstr("text/plain"));
+}
+
+class PrometheusStatsFormatterTest : public testing::Test {
+protected:
+  void addCounter(const std::string& name, std::vector<Stats::Tag> cluster_tags) {
+    std::string tname = std::string(name);
+    counters_.push_back(alloc_.makeCounter(name, std::move(tname), std::move(cluster_tags)));
+  }
+
+  void addGauge(const std::string& name, std::vector<Stats::Tag> cluster_tags) {
+    std::string tname = std::string(name);
+    gauges_.push_back(alloc_.makeGauge(name, std::move(tname), std::move(cluster_tags)));
+  }
+
+  Stats::HeapRawStatDataAllocator alloc_;
+  std::vector<Stats::CounterSharedPtr> counters_;
+  std::vector<Stats::GaugeSharedPtr> gauges_;
+};
+
+TEST_F(PrometheusStatsFormatterTest, MetricName) {
   std::string raw = "vulture.eats-liver";
   std::string expected = "envoy_vulture_eats_liver";
   auto actual = PrometheusStatsFormatter::metricName(raw);
   EXPECT_EQ(expected, actual);
 }
 
-TEST(PrometheusStatsFormatter, FormattedTags) {
-  // If value has - then it should be replaced by _ .
+TEST_F(PrometheusStatsFormatterTest, FormattedTags) {
   std::vector<Stats::Tag> tags;
   Stats::Tag tag1 = {"a.tag-name", "a.tag-value"};
-  Stats::Tag tag2 = {"another_tag_name", "another.tag-value"};
+  Stats::Tag tag2 = {"another_tag_name", "another_tag-value"};
   tags.push_back(tag1);
   tags.push_back(tag2);
-  std::string expected = "a_tag_name=\"a_tag_value\",another_tag_name=\"another_tag_value\"";
+  std::string expected = "a_tag_name=\"a.tag-value\",another_tag_name=\"another_tag-value\"";
   auto actual = PrometheusStatsFormatter::formattedTags(tags);
   EXPECT_EQ(expected, actual);
 }
 
-TEST(PrometheusStatsFormatter, MetricNameCollison) {
+TEST_F(PrometheusStatsFormatterTest, MetricNameCollison) {
 
   // Create two counters and two gauges with each pair having the same name,
   // but having different tag names and values.
   //`statsAsPrometheus()` should return two implying it found two unique stat names
 
-  Stats::HeapRawStatDataAllocator alloc;
-  std::list<Stats::CounterSharedPtr> counters;
-  std::list<Stats::GaugeSharedPtr> gauges;
-
-  {
-    std::string name = "cluster.test_cluster_1.upstream_cx_total";
-    std::vector<Stats::Tag> cluster_tags;
-    Stats::Tag tag = {"a.tag-name", "a.tag-value"};
-    cluster_tags.push_back(tag);
-    Stats::RawStatData* data = alloc.alloc(name);
-    Stats::CounterSharedPtr c = std::make_shared<Stats::CounterImpl>(*data, alloc, std::move(name),
-                                                                     std::move(cluster_tags));
-    counters.push_back(c);
-  }
-
-  {
-    std::string name = "cluster.test_cluster_1.upstream_cx_total";
-    std::vector<Stats::Tag> cluster_tags;
-    Stats::Tag tag = {"another_tag_name", "another_tag-value"};
-    cluster_tags.push_back(tag);
-    Stats::RawStatData* data = alloc.alloc(name);
-    Stats::CounterSharedPtr c = std::make_shared<Stats::CounterImpl>(*data, alloc, std::move(name),
-                                                                     std::move(cluster_tags));
-    counters.push_back(c);
-  }
-
-  {
-    std::vector<Stats::Tag> cluster_tags;
-    std::string name = "cluster.test_cluster_2.upstream_cx_total";
-    Stats::Tag tag = {"another_tag_name_3", "another_tag_3-value"};
-    cluster_tags.push_back(tag);
-    Stats::RawStatData* data = alloc.alloc(name);
-    Stats::GaugeSharedPtr g =
-        std::make_shared<Stats::GaugeImpl>(*data, alloc, std::move(name), std::move(cluster_tags));
-    gauges.push_back(g);
-  }
-
-  {
-    std::vector<Stats::Tag> cluster_tags;
-    std::string name = "cluster.test_cluster_2.upstream_cx_total";
-    Stats::Tag tag = {"another_tag_name_4", "another_tag_4-value"};
-    cluster_tags.push_back(tag);
-    Stats::RawStatData* data = alloc.alloc(name);
-    Stats::GaugeSharedPtr g =
-        std::make_shared<Stats::GaugeImpl>(*data, alloc, std::move(name), std::move(cluster_tags));
-    gauges.push_back(g);
-  }
+  addCounter("cluster.test_cluster_1.upstream_cx_total", {{"a.tag-name", "a.tag-value"}});
+  addCounter("cluster.test_cluster_1.upstream_cx_total",
+             {{"another_tag_name", "another_tag-value"}});
+  addGauge("cluster.test_cluster_2.upstream_cx_total",
+           {{"another_tag_name_3", "another_tag_3-value"}});
+  addGauge("cluster.test_cluster_2.upstream_cx_total",
+           {{"another_tag_name_4", "another_tag_4-value"}});
 
   Buffer::OwnedImpl response;
-  EXPECT_EQ(2UL, PrometheusStatsFormatter::statsAsPrometheus(counters, gauges, response));
+  EXPECT_EQ(2UL, PrometheusStatsFormatter::statsAsPrometheus(counters_, gauges_, response));
 }
 
-TEST(PrometheusStatsFormatter, UniqueMetricName) {
+TEST_F(PrometheusStatsFormatterTest, UniqueMetricName) {
 
   // Create two counters and two gauges, all with unique names.
   // statsAsPrometheus() should return four implying it found
   // four unique stat names.
 
-  Stats::HeapRawStatDataAllocator alloc;
-  std::list<Stats::CounterSharedPtr> counters;
-  std::list<Stats::GaugeSharedPtr> gauges;
-
-  {
-    std::string name = "cluster.test_cluster_1.upstream_cx_total";
-    std::vector<Stats::Tag> cluster_tags;
-    Stats::Tag tag = {"a.tag-name", "a.tag-value"};
-    cluster_tags.push_back(tag);
-    Stats::RawStatData* data = alloc.alloc(name);
-    Stats::CounterSharedPtr c = std::make_shared<Stats::CounterImpl>(*data, alloc, std::move(name),
-                                                                     std::move(cluster_tags));
-    counters.push_back(c);
-  }
-
-  {
-    std::string name = "cluster.test_cluster_2.upstream_cx_total";
-    std::vector<Stats::Tag> cluster_tags;
-    Stats::Tag tag = {"another_tag_name", "another_tag-value"};
-    cluster_tags.push_back(tag);
-    Stats::RawStatData* data = alloc.alloc(name);
-    Stats::CounterSharedPtr c = std::make_shared<Stats::CounterImpl>(*data, alloc, std::move(name),
-                                                                     std::move(cluster_tags));
-    counters.push_back(c);
-  }
-
-  {
-    std::vector<Stats::Tag> cluster_tags;
-    std::string name = "cluster.test_cluster_3.upstream_cx_total";
-    Stats::Tag tag = {"another_tag_name_3", "another_tag_3-value"};
-    cluster_tags.push_back(tag);
-    Stats::RawStatData* data = alloc.alloc(name);
-    Stats::GaugeSharedPtr g =
-        std::make_shared<Stats::GaugeImpl>(*data, alloc, std::move(name), std::move(cluster_tags));
-    gauges.push_back(g);
-  }
-
-  {
-    std::vector<Stats::Tag> cluster_tags;
-    std::string name = "cluster.test_cluster_4.upstream_cx_total";
-    Stats::Tag tag = {"another_tag_name_4", "another_tag_4-value"};
-    cluster_tags.push_back(tag);
-    Stats::RawStatData* data = alloc.alloc(name);
-    Stats::GaugeSharedPtr g =
-        std::make_shared<Stats::GaugeImpl>(*data, alloc, std::move(name), std::move(cluster_tags));
-    gauges.push_back(g);
-  }
+  addCounter("cluster.test_cluster_1.upstream_cx_total", {{"a.tag-name", "a.tag-value"}});
+  addCounter("cluster.test_cluster_2.upstream_cx_total",
+             {{"another_tag_name", "another_tag-value"}});
+  addGauge("cluster.test_cluster_3.upstream_cx_total",
+           {{"another_tag_name_3", "another_tag_3-value"}});
+  addGauge("cluster.test_cluster_4.upstream_cx_total",
+           {{"another_tag_name_4", "another_tag_4-value"}});
 
   Buffer::OwnedImpl response;
-  EXPECT_EQ(4UL, PrometheusStatsFormatter::statsAsPrometheus(counters, gauges, response));
+  EXPECT_EQ(4UL, PrometheusStatsFormatter::statsAsPrometheus(counters_, gauges_, response));
 }
 
 } // namespace Server

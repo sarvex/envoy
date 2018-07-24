@@ -7,6 +7,7 @@
 #include "common/common/logger.h"
 #include "common/common/utility.h"
 #include "common/config/metadata.h"
+#include "common/http/header_map_impl.h"
 #include "common/json/json_loader.h"
 #include "common/request_info/utility.h"
 
@@ -66,7 +67,7 @@ parseUpstreamMetadataField(absl::string_view params_str) {
     }
 
     const ProtobufWkt::Value* value =
-        &Config::Metadata::metadataValue(host->metadata(), params[0], params[1]);
+        &Config::Metadata::metadataValue(*host->metadata(), params[0], params[1]);
     if (value->kind_case() == ProtobufWkt::Value::KIND_NOT_SET) {
       // No kind indicates default ProtobufWkt::Value which means namespace or key not
       // found.
@@ -134,7 +135,19 @@ RequestInfoHeaderFormatter::RequestInfoHeaderFormatter(absl::string_view field_n
       return RequestInfo::Utility::formatDownstreamAddressNoPort(
           *request_info.downstreamLocalAddress());
     };
-  } else if (field_name.find_first_of("UPSTREAM_METADATA") == 0) {
+  } else if (field_name.find("START_TIME") == 0) {
+    const std::string pattern = fmt::format("%{}%", field_name);
+    if (start_time_formatters_.find(pattern) == start_time_formatters_.end()) {
+      start_time_formatters_.emplace(
+          std::make_pair(pattern, AccessLog::AccessLogFormatParser::parse(pattern)));
+    }
+    field_extractor_ = [this, pattern](const Envoy::RequestInfo::RequestInfo& request_info) {
+      const auto& formatters = start_time_formatters_.at(pattern);
+      ASSERT(formatters.size() == 1);
+      Http::HeaderMapImpl empty_map;
+      return formatters.at(0)->format(empty_map, empty_map, empty_map, request_info);
+    };
+  } else if (field_name.find("UPSTREAM_METADATA") == 0) {
     field_extractor_ =
         parseUpstreamMetadataField(field_name.substr(STATIC_STRLEN("UPSTREAM_METADATA")));
   } else {

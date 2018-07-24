@@ -168,6 +168,9 @@ TEST_F(EdsTest, EndpointMetadata) {
                                          Config::MetadataFilters::get().ENVOY_LB,
                                          Config::MetadataEnvoyLbKeys::get().CANARY)
       .set_bool_value(true);
+  Config::Metadata::mutableMetadataValue(*canary->mutable_metadata(),
+                                         Config::MetadataFilters::get().ENVOY_LB, "version")
+      .set_string_value("v1");
 
   bool initialized = false;
   cluster_->initialize([&initialized] { initialized = true; });
@@ -177,30 +180,46 @@ TEST_F(EdsTest, EndpointMetadata) {
 
   auto& hosts = cluster_->prioritySet().hostSetsPerPriority()[0]->hosts();
   EXPECT_EQ(hosts.size(), 2);
-  EXPECT_EQ(hosts[0]->metadata().filter_metadata_size(), 2);
-  EXPECT_EQ(Config::Metadata::metadataValue(hosts[0]->metadata(),
+  EXPECT_EQ(hosts[0]->metadata()->filter_metadata_size(), 2);
+  EXPECT_EQ(Config::Metadata::metadataValue(*hosts[0]->metadata(),
                                             Config::MetadataFilters::get().ENVOY_LB, "string_key")
                 .string_value(),
             std::string("string_value"));
-  EXPECT_EQ(Config::Metadata::metadataValue(hosts[0]->metadata(), "custom_namespace", "num_key")
+  EXPECT_EQ(Config::Metadata::metadataValue(*hosts[0]->metadata(), "custom_namespace", "num_key")
                 .number_value(),
             1.1);
-  EXPECT_FALSE(Config::Metadata::metadataValue(hosts[0]->metadata(),
+  EXPECT_FALSE(Config::Metadata::metadataValue(*hosts[0]->metadata(),
                                                Config::MetadataFilters::get().ENVOY_LB,
                                                Config::MetadataEnvoyLbKeys::get().CANARY)
                    .bool_value());
   EXPECT_FALSE(hosts[0]->canary());
 
-  EXPECT_EQ(hosts[1]->metadata().filter_metadata_size(), 1);
-  EXPECT_TRUE(Config::Metadata::metadataValue(hosts[1]->metadata(),
+  EXPECT_EQ(hosts[1]->metadata()->filter_metadata_size(), 1);
+  EXPECT_TRUE(Config::Metadata::metadataValue(*hosts[1]->metadata(),
                                               Config::MetadataFilters::get().ENVOY_LB,
                                               Config::MetadataEnvoyLbKeys::get().CANARY)
                   .bool_value());
   EXPECT_TRUE(hosts[1]->canary());
+  EXPECT_EQ(Config::Metadata::metadataValue(*hosts[1]->metadata(),
+                                            Config::MetadataFilters::get().ENVOY_LB, "version")
+                .string_value(),
+            "v1");
 
   // We don't rebuild with the exact same config.
   VERBOSE_EXPECT_NO_THROW(cluster_->onConfigUpdate(resources, ""));
   EXPECT_EQ(1UL, stats_.counter("cluster.name.update_no_rebuild").value());
+
+  // New resources with Metadata updated.
+  Config::Metadata::mutableMetadataValue(*canary->mutable_metadata(),
+                                         Config::MetadataFilters::get().ENVOY_LB, "version")
+      .set_string_value("v2");
+  VERBOSE_EXPECT_NO_THROW(cluster_->onConfigUpdate(resources, ""));
+  auto& nhosts = cluster_->prioritySet().hostSetsPerPriority()[0]->hosts();
+  EXPECT_EQ(nhosts.size(), 2);
+  EXPECT_EQ(Config::Metadata::metadataValue(*nhosts[1]->metadata(),
+                                            Config::MetadataFilters::get().ENVOY_LB, "version")
+                .string_value(),
+            "v2");
 }
 
 // Validate that onConfigUpdate() updates endpoint health status.
@@ -526,6 +545,94 @@ TEST_F(EdsTest, EndpointLocalityWeights) {
   EXPECT_EQ(42, locality_weights[0]);
   EXPECT_EQ(0, locality_weights[1]);
   EXPECT_EQ(37, locality_weights[2]);
+}
+
+// Validate that onConfigUpdate() removes any locality not referenced in the
+// config update in each priority.
+TEST_F(EdsTest, RemoveUnreferencedLocalities) {
+  Protobuf::RepeatedPtrField<envoy::api::v2::ClusterLoadAssignment> resources;
+  auto* cluster_load_assignment = resources.Add();
+  cluster_load_assignment->set_cluster_name("fare");
+  uint32_t port = 1000;
+  auto add_hosts_to_locality = [cluster_load_assignment,
+                                &port](const std::string& region, const std::string& zone,
+                                       const std::string& sub_zone, uint32_t n, uint32_t priority) {
+    auto* endpoints = cluster_load_assignment->add_endpoints();
+    endpoints->set_priority(priority);
+    auto* locality = endpoints->mutable_locality();
+    locality->set_region(region);
+    locality->set_zone(zone);
+    locality->set_sub_zone(sub_zone);
+
+    for (uint32_t i = 0; i < n; ++i) {
+      auto* socket_address = endpoints->add_lb_endpoints()
+                                 ->mutable_endpoint()
+                                 ->mutable_address()
+                                 ->mutable_socket_address();
+      socket_address->set_address("1.2.3.4");
+      socket_address->set_port_value(port++);
+    }
+  };
+
+  // Add two localities to each of priority 0 and 1
+  add_hosts_to_locality("oceania", "koala", "ingsoc", 2, 0);
+  add_hosts_to_locality("", "us-east-1a", "", 1, 0);
+
+  add_hosts_to_locality("oceania", "bear", "best", 4, 1);
+  add_hosts_to_locality("", "us-west-1a", "", 2, 1);
+
+  bool initialized = false;
+  cluster_->initialize([&initialized] { initialized = true; });
+  VERBOSE_EXPECT_NO_THROW(cluster_->onConfigUpdate(resources, ""));
+  EXPECT_TRUE(initialized);
+
+  {
+    auto& hosts_per_locality =
+        cluster_->prioritySet().hostSetsPerPriority()[0]->hostsPerLocality().get();
+    EXPECT_EQ(2, hosts_per_locality.size());
+  }
+
+  {
+    auto& hosts_per_locality =
+        cluster_->prioritySet().hostSetsPerPriority()[1]->hostsPerLocality().get();
+    EXPECT_EQ(2, hosts_per_locality.size());
+  }
+
+  // Reset the ClusterLoadAssingment to only contain one of the locality per priority.
+  // This should leave us with only one locality.
+  cluster_load_assignment->clear_endpoints();
+  add_hosts_to_locality("oceania", "koala", "ingsoc", 4, 0);
+  add_hosts_to_locality("oceania", "bear", "best", 2, 1);
+
+  VERBOSE_EXPECT_NO_THROW(cluster_->onConfigUpdate(resources, ""));
+
+  {
+    auto& hosts_per_locality =
+        cluster_->prioritySet().hostSetsPerPriority()[0]->hostsPerLocality().get();
+    EXPECT_EQ(1, hosts_per_locality.size());
+  }
+
+  {
+    auto& hosts_per_locality =
+        cluster_->prioritySet().hostSetsPerPriority()[1]->hostsPerLocality().get();
+    EXPECT_EQ(1, hosts_per_locality.size());
+  }
+
+  // Clear out the new ClusterLoadAssignment. This should leave us with 0 localities per priority.
+  cluster_load_assignment->clear_endpoints();
+  VERBOSE_EXPECT_NO_THROW(cluster_->onConfigUpdate(resources, ""));
+
+  {
+    auto& hosts_per_locality =
+        cluster_->prioritySet().hostSetsPerPriority()[0]->hostsPerLocality().get();
+    EXPECT_EQ(0, hosts_per_locality.size());
+  }
+
+  {
+    auto& hosts_per_locality =
+        cluster_->prioritySet().hostSetsPerPriority()[1]->hostsPerLocality().get();
+    EXPECT_EQ(0, hosts_per_locality.size());
+  }
 }
 
 // Validate that onConfigUpdate() updates bins hosts per locality as expected.

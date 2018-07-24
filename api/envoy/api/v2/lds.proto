@@ -55,15 +55,8 @@ message Listener {
   // :ref:`FilterChainMatch <envoy_api_msg_listener.FilterChainMatch>` criteria is used on a
   // connection.
   //
-  // .. attention::
-  //
-  //   In the current version, multiple filter chains are supported **only** so that SNI can be
-  //   configured. See the :ref:`FAQ entry <faq_how_to_setup_sni>` on how to configure SNI for more
-  //   information. When multiple filter chains are configured, each filter chain must have an
-  //   **identical** set of :ref:`filters <envoy_api_field_listener.FilterChain.filters>`. If the
-  //   filters differ, the configuration will fail to load. In the future, this limitation will be
-  //   relaxed such that different filters can be used depending on which filter chain matches
-  //   (based on SNI or some other parameter).
+  // Example using SNI for filter chain selection can be found in the
+  // :ref:`FAQ entry <faq_how_to_setup_sni>`.
   repeated listener.FilterChain filter_chains = 3
       [(validate.rules).repeated .min_items = 1, (gogoproto.nullable) = false];
 
@@ -150,6 +143,10 @@ message Listener {
   // (default), the socket is not modified, i.e. the option is neither enabled
   // nor disabled.
   google.protobuf.BoolValue freebind = 11;
+
+  // Additional socket options that may not be present in Envoy source code or
+  // precompiled binaries.
+  repeated core.SocketOption socket_options = 13;
 
   // Whether the listener should accept TCP Fast Open (TFO) connections.
   // When this flag is set to a value greater than 0, the option TCP_FASTOPEN is enabled on

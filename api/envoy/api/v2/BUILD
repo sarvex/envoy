@@ -1,4 +1,4 @@
-load("//bazel:api_build_system.bzl", "api_proto_library", "api_go_proto_library", "api_go_grpc_library")
+load("//bazel:api_build_system.bzl", "api_go_grpc_library", "api_go_proto_library", "api_proto_library_internal")
 
 licenses(["notice"])  # Apache 2
 
@@ -11,12 +11,12 @@ package_group(
         "//envoy/admin/...",
         "//envoy/api/v2",
         "//envoy/config/...",
-        "//envoy/extensions/...",
+        "//envoy/data/...",
         "//envoy/service/...",
     ],
 )
 
-api_proto_library(
+api_proto_library_internal(
     name = "discovery",
     srcs = ["discovery.proto"],
     visibility = [":friends"],
@@ -29,7 +29,7 @@ api_go_proto_library(
     deps = ["//envoy/api/v2/core:base_go_proto"],
 )
 
-api_proto_library(
+api_proto_library_internal(
     name = "eds",
     srcs = ["eds.proto"],
     has_services = 1,
@@ -55,13 +55,14 @@ api_go_grpc_library(
     ],
 )
 
-api_proto_library(
+api_proto_library_internal(
     name = "cds",
     srcs = ["cds.proto"],
     has_services = 1,
     visibility = [":friends"],
     deps = [
         ":discovery",
+        ":eds",
         "//envoy/api/v2/auth:cert",
         "//envoy/api/v2/cluster:circuit_breaker",
         "//envoy/api/v2/cluster:outlier_detection",
@@ -70,6 +71,7 @@ api_proto_library(
         "//envoy/api/v2/core:config_source",
         "//envoy/api/v2/core:health_check",
         "//envoy/api/v2/core:protocol",
+        "//envoy/api/v2/endpoint",
         "//envoy/type:percent",
     ],
 )
@@ -79,6 +81,7 @@ api_go_grpc_library(
     proto = ":cds",
     deps = [
         ":discovery_go_proto",
+        ":eds_go_grpc",
         "//envoy/api/v2/auth:cert_go_proto",
         "//envoy/api/v2/cluster:circuit_breaker_go_proto",
         "//envoy/api/v2/cluster:outlier_detection_go_proto",
@@ -87,11 +90,12 @@ api_go_grpc_library(
         "//envoy/api/v2/core:config_source_go_proto",
         "//envoy/api/v2/core:health_check_go_proto",
         "//envoy/api/v2/core:protocol_go_proto",
+        "//envoy/api/v2/endpoint:endpoint_go_proto",
         "//envoy/type:percent_go_proto",
     ],
 )
 
-api_proto_library(
+api_proto_library_internal(
     name = "lds",
     srcs = ["lds.proto"],
     has_services = 1,
@@ -115,7 +119,7 @@ api_go_grpc_library(
     ],
 )
 
-api_proto_library(
+api_proto_library_internal(
     name = "rds",
     srcs = ["rds.proto"],
     has_services = 1,

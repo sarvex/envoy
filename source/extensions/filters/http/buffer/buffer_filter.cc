@@ -58,7 +58,7 @@ void BufferFilter::initConfig() {
     return;
   }
 
-  const std::string& name = HttpFilterNames::get().BUFFER;
+  const std::string& name = HttpFilterNames::get().Buffer;
   const auto* entry = callbacks_->route()->routeEntry();
 
   const BufferFilterSettings* route_local =
@@ -107,14 +107,10 @@ BufferFilterStats BufferFilter::generateStats(const std::string& prefix, Stats::
   return {ALL_BUFFER_FILTER_STATS(POOL_COUNTER_PREFIX(scope, final_prefix))};
 }
 
-void BufferFilter::onDestroy() {
-  resetInternalState();
-  stream_destroyed_ = true;
-}
+void BufferFilter::onDestroy() { resetInternalState(); }
 
 void BufferFilter::onRequestTimeout() {
-  Http::Utility::sendLocalReply(*callbacks_, stream_destroyed_, Http::Code::RequestTimeout,
-                                "buffer request timeout");
+  callbacks_->sendLocalReply(Http::Code::RequestTimeout, "buffer request timeout", nullptr);
   config_->stats().rq_timeout_.inc();
 }
 

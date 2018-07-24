@@ -1,4 +1,5 @@
 licenses(["notice"])  # Apache 2
+
 # Ratelimit L7 HTTP filter
 # Public docs: docs/root/configuration/http_filters/rate_limit_filter.rst
 
@@ -32,9 +33,9 @@ envoy_cc_library(
     deps = [
         ":ratelimit_lib",
         "//include/envoy/registry",
-        "//include/envoy/server:filter_config_interface",
         "//source/common/config:filter_json_lib",
         "//source/common/protobuf:utility_lib",
         "//source/extensions/filters/http:well_known_names",
+        "//source/extensions/filters/http/common:factory_base_lib",
     ],
 )

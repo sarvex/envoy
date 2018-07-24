@@ -13,6 +13,7 @@
 #include "envoy/http/codes.h"
 #include "envoy/local_info/local_info.h"
 #include "envoy/runtime/runtime.h"
+#include "envoy/secret/secret_manager.h"
 #include "envoy/ssl/context_manager.h"
 #include "envoy/thread_local/thread_local.h"
 #include "envoy/upstream/cluster_manager.h"
@@ -35,27 +36,35 @@ public:
                             Network::DnsResolverSharedPtr dns_resolver,
                             Ssl::ContextManager& ssl_context_manager,
                             Event::Dispatcher& main_thread_dispatcher,
-                            const LocalInfo::LocalInfo& local_info)
+                            const LocalInfo::LocalInfo& local_info,
+                            Secret::SecretManager& secret_manager)
       : main_thread_dispatcher_(main_thread_dispatcher), runtime_(runtime), stats_(stats),
         tls_(tls), random_(random), dns_resolver_(dns_resolver),
-        ssl_context_manager_(ssl_context_manager), local_info_(local_info) {}
+        ssl_context_manager_(ssl_context_manager), local_info_(local_info),
+        secret_manager_(secret_manager) {}
 
   // Upstream::ClusterManagerFactory
   ClusterManagerPtr
   clusterManagerFromProto(const envoy::config::bootstrap::v2::Bootstrap& bootstrap,
                           Stats::Store& stats, ThreadLocal::Instance& tls, Runtime::Loader& runtime,
                           Runtime::RandomGenerator& random, const LocalInfo::LocalInfo& local_info,
-                          AccessLog::AccessLogManager& log_manager) override;
+                          AccessLog::AccessLogManager& log_manager, Server::Admin& admin) override;
   Http::ConnectionPool::InstancePtr
   allocateConnPool(Event::Dispatcher& dispatcher, HostConstSharedPtr host,
                    ResourcePriority priority, Http::Protocol protocol,
                    const Network::ConnectionSocket::OptionsSharedPtr& options) override;
+  Tcp::ConnectionPool::InstancePtr
+  allocateTcpConnPool(Event::Dispatcher& dispatcher, HostConstSharedPtr host,
+                      ResourcePriority priority,
+                      const Network::ConnectionSocket::OptionsSharedPtr& options) override;
   ClusterSharedPtr clusterFromProto(const envoy::api::v2::Cluster& cluster, ClusterManager& cm,
                                     Outlier::EventLoggerSharedPtr outlier_event_logger,
+                                    AccessLog::AccessLogManager& log_manager,
                                     bool added_via_api) override;
   CdsApiPtr createCds(const envoy::api::v2::core::ConfigSource& cds_config,
                       const absl::optional<envoy::api::v2::core::ConfigSource>& eds_config,
                       ClusterManager& cm) override;
+  Secret::SecretManager& secretManager() override { return secret_manager_; }
 
 protected:
   Event::Dispatcher& main_thread_dispatcher_;
@@ -68,6 +77,7 @@ private:
   Network::DnsResolverSharedPtr dns_resolver_;
   Ssl::ContextManager& ssl_context_manager_;
   const LocalInfo::LocalInfo& local_info_;
+  Secret::SecretManager& secret_manager_;
 };
 
 /**
@@ -150,10 +160,13 @@ public:
                      ThreadLocal::Instance& tls, Runtime::Loader& runtime,
                      Runtime::RandomGenerator& random, const LocalInfo::LocalInfo& local_info,
                      AccessLog::AccessLogManager& log_manager,
-                     Event::Dispatcher& main_thread_dispatcher);
+                     Event::Dispatcher& main_thread_dispatcher, Server::Admin& admin,
+                     SystemTimeSource& system_time_source,
+                     MonotonicTimeSource& monotonic_time_source);
 
   // Upstream::ClusterManager
-  bool addOrUpdateCluster(const envoy::api::v2::Cluster& cluster) override;
+  bool addOrUpdateCluster(const envoy::api::v2::Cluster& cluster,
+                          const std::string& version_info) override;
   void setInitializedCb(std::function<void()> callback) override {
     init_helper_.setInitializedCb(callback);
   }
@@ -171,6 +184,9 @@ public:
                                                          ResourcePriority priority,
                                                          Http::Protocol protocol,
                                                          LoadBalancerContext* context) override;
+  Tcp::ConnectionPool::Instance* tcpConnPoolForCluster(const std::string& cluster,
+                                                       ResourcePriority priority,
+                                                       LoadBalancerContext* context) override;
   Host::CreateConnectionData tcpConnForCluster(const std::string& cluster,
                                                LoadBalancerContext* context) override;
   Http::AsyncClient& httpAsyncClientForCluster(const std::string& cluster) override;
@@ -191,6 +207,8 @@ public:
   ClusterUpdateCallbacksHandlePtr
   addThreadLocalClusterUpdateCallbacks(ClusterUpdateCallbacks&) override;
 
+  ClusterManagerFactory& clusterManagerFactory() override { return factory_; }
+
 private:
   /**
    * Thread local cached cluster data. Each thread local cluster gets updates from the parent
@@ -200,6 +218,13 @@ private:
   struct ThreadLocalClusterManagerImpl : public ThreadLocal::ThreadLocalObject {
     struct ConnPoolsContainer {
       typedef std::map<std::vector<uint8_t>, Http::ConnectionPool::InstancePtr> ConnPools;
+
+      ConnPools pools_;
+      uint64_t drains_remaining_{};
+    };
+
+    struct TcpConnPoolsContainer {
+      typedef std::map<std::vector<uint8_t>, Tcp::ConnectionPool::InstancePtr> ConnPools;
 
       ConnPools pools_;
       uint64_t drains_remaining_{};
@@ -240,6 +265,9 @@ private:
       Http::ConnectionPool::Instance* connPool(ResourcePriority priority, Http::Protocol protocol,
                                                LoadBalancerContext* context);
 
+      Tcp::ConnectionPool::Instance* tcpConnPool(ResourcePriority priority,
+                                                 LoadBalancerContext* context);
+
       // Upstream::ThreadLocalCluster
       const PrioritySet& prioritySet() override { return priority_set_; }
       ClusterInfoConstSharedPtr info() override { return cluster_info_; }
@@ -264,6 +292,7 @@ private:
     ~ThreadLocalClusterManagerImpl();
     void drainConnPools(const HostVector& hosts);
     void drainConnPools(HostSharedPtr old_host, ConnPoolsContainer& container);
+    void drainTcpConnPools(HostSharedPtr old_host, TcpConnPoolsContainer& container);
     void removeTcpConn(const HostConstSharedPtr& host, Network::ClientConnection& connection);
     static void updateClusterMembership(const std::string& name, uint32_t priority,
                                         HostVectorConstSharedPtr hosts,
@@ -282,15 +311,21 @@ private:
     // These maps are owned by the ThreadLocalClusterManagerImpl instead of the ClusterEntry
     // to prevent lifetime/ownership issues when a cluster is dynamically removed.
     std::unordered_map<HostConstSharedPtr, ConnPoolsContainer> host_http_conn_pool_map_;
+    std::unordered_map<HostConstSharedPtr, TcpConnPoolsContainer> host_tcp_conn_pool_map_;
     std::unordered_map<HostConstSharedPtr, TcpConnectionsMap> host_tcp_conn_map_;
 
     std::list<Envoy::Upstream::ClusterUpdateCallbacks*> update_callbacks_;
     const PrioritySet* local_priority_set_{};
+    bool destroying_{};
   };
 
   struct ClusterData {
-    ClusterData(uint64_t config_hash, bool added_via_api, ClusterSharedPtr&& cluster)
-        : config_hash_(config_hash), added_via_api_(added_via_api), cluster_(std::move(cluster)) {}
+    ClusterData(const envoy::api::v2::Cluster& cluster_config, const std::string& version_info,
+                bool added_via_api, ClusterSharedPtr&& cluster,
+                SystemTimeSource& system_time_source)
+        : cluster_config_(cluster_config), config_hash_(MessageUtil::hash(cluster_config)),
+          version_info_(version_info), added_via_api_(added_via_api), cluster_(std::move(cluster)),
+          last_updated_(system_time_source.currentTime()) {}
 
     bool blockUpdate(uint64_t hash) { return !added_via_api_ || config_hash_ == hash; }
 
@@ -302,11 +337,14 @@ private:
       }
     }
 
+    const envoy::api::v2::Cluster cluster_config_;
     const uint64_t config_hash_;
+    const std::string version_info_;
     const bool added_via_api_;
     ClusterSharedPtr cluster_;
     // Optional thread aware LB depending on the LB type. Not all clusters have one.
     ThreadAwareLoadBalancerPtr thread_aware_lb_;
+    SystemTime last_updated_;
   };
 
   struct ClusterUpdateCallbacksHandleImpl : public ClusterUpdateCallbacksHandle {
@@ -320,12 +358,14 @@ private:
   };
 
   typedef std::unique_ptr<ClusterData> ClusterDataPtr;
-  typedef std::unordered_map<std::string, ClusterDataPtr> ClusterMap;
+  // This map is ordered so that config dumping is consistent.
+  typedef std::map<std::string, ClusterDataPtr> ClusterMap;
 
   void createOrUpdateThreadLocalCluster(ClusterData& cluster);
+  ProtobufTypes::MessagePtr dumpClusterConfigs();
   static ClusterManagerStats generateStats(Stats::Scope& scope);
-  void loadCluster(const envoy::api::v2::Cluster& cluster, bool added_via_api,
-                   ClusterMap& cluster_map);
+  void loadCluster(const envoy::api::v2::Cluster& cluster, const std::string& version_info,
+                   bool added_via_api, ClusterMap& cluster_map);
   void onClusterInit(Cluster& cluster);
   void postThreadLocalClusterUpdate(const Cluster& cluster, uint32_t priority,
                                     const HostVector& hosts_added, const HostVector& hosts_removed);
@@ -337,6 +377,7 @@ private:
   Stats::Store& stats_;
   ThreadLocal::SlotPtr tls_;
   Runtime::RandomGenerator& random_;
+  AccessLog::AccessLogManager& log_manager_;
   ClusterMap active_clusters_;
   ClusterMap warming_clusters_;
   absl::optional<envoy::api::v2::core::ConfigSource> eds_config_;
@@ -351,6 +392,8 @@ private:
   // The name of the local cluster of this Envoy instance if defined, else the empty string.
   std::string local_cluster_name_;
   Grpc::AsyncClientManagerPtr async_client_manager_;
+  Server::ConfigTracker::EntryOwnerPtr config_tracker_entry_;
+  SystemTimeSource& system_time_source_;
 };
 
 } // namespace Upstream

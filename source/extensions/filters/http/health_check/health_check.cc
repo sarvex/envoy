@@ -38,6 +38,12 @@ Http::FilterHeadersStatus HealthCheckFilter::decodeHeaders(Http::HeaderMap& head
     health_check_request_ = true;
     callbacks_->requestInfo().healthCheck(true);
 
+    // Set the 'sampled' status for the span to false. This overrides
+    // any previous sampling decision associated with the trace instance,
+    // resulting in this span (and any subsequent child spans) not being
+    // reported to the backend tracing system.
+    callbacks_->activeSpan().setSampled(false);
+
     // If we are not in pass through mode, we always handle. Otherwise, we handle if the server is
     // in the failed state or if we are using caching and we should use the cached response.
     if (!pass_through_mode_ || context_.healthCheckFailed() ||
@@ -89,13 +95,11 @@ Http::FilterHeadersStatus HealthCheckFilter::encodeHeaders(Http::HeaderMap& head
 
 void HealthCheckFilter::onComplete() {
   ASSERT(handling_);
-  Http::HeaderMapPtr headers;
+  Http::Code final_status = Http::Code::OK;
   if (context_.healthCheckFailed()) {
     callbacks_->requestInfo().setResponseFlag(RequestInfo::ResponseFlag::FailedLocalHealthCheck);
-    headers.reset(new Http::HeaderMapImpl{
-        {Http::Headers::get().Status, std::to_string(enumToInt(Http::Code::ServiceUnavailable))}});
+    final_status = Http::Code::ServiceUnavailable;
   } else {
-    Http::Code final_status = Http::Code::OK;
     if (cache_manager_) {
       final_status = cache_manager_->getCachedResponseCode();
     } else if (cluster_min_healthy_percentages_ != nullptr &&
@@ -137,12 +141,9 @@ void HealthCheckFilter::onComplete() {
     if (!Http::CodeUtility::is2xx(enumToInt(final_status))) {
       callbacks_->requestInfo().setResponseFlag(RequestInfo::ResponseFlag::FailedLocalHealthCheck);
     }
-
-    headers.reset(new Http::HeaderMapImpl{
-        {Http::Headers::get().Status, std::to_string(enumToInt(final_status))}});
   }
 
-  callbacks_->encodeHeaders(std::move(headers), true);
+  callbacks_->sendLocalReply(final_status, "", nullptr);
 }
 
 } // namespace HealthCheck

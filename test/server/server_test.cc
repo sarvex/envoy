@@ -14,7 +14,9 @@
 
 using testing::HasSubstr;
 using testing::InSequence;
+using testing::Invoke;
 using testing::Property;
+using testing::Ref;
 using testing::SaveArg;
 using testing::StrictMock;
 using testing::_;
@@ -26,17 +28,23 @@ TEST(ServerInstanceUtil, flushHelper) {
   InSequence s;
 
   Stats::IsolatedStoreImpl store;
+  Stats::SourceImpl source(store);
   store.counter("hello").inc();
   store.gauge("world").set(5);
   std::unique_ptr<Stats::MockSink> sink(new StrictMock<Stats::MockSink>());
-  EXPECT_CALL(*sink, beginFlush());
-  EXPECT_CALL(*sink, flushCounter(Property(&Stats::Metric::name, "hello"), 1));
-  EXPECT_CALL(*sink, flushGauge(Property(&Stats::Metric::name, "world"), 5));
-  EXPECT_CALL(*sink, endFlush());
+  EXPECT_CALL(*sink, flush(Ref(source))).WillOnce(Invoke([](Stats::Source& source) {
+    ASSERT_EQ(source.cachedCounters().size(), 1);
+    EXPECT_EQ(source.cachedCounters().front()->name(), "hello");
+    EXPECT_EQ(source.cachedCounters().front()->latch(), 1);
+
+    ASSERT_EQ(source.cachedGauges().size(), 1);
+    EXPECT_EQ(source.cachedGauges().front()->name(), "world");
+    EXPECT_EQ(source.cachedGauges().front()->value(), 5);
+  }));
 
   std::list<Stats::SinkPtr> sinks;
   sinks.emplace_back(std::move(sink));
-  InstanceUtil::flushMetricsToSinks(sinks, store);
+  InstanceUtil::flushMetricsToSinks(sinks, source);
 }
 
 class RunHelperTest : public testing::Test {
@@ -109,6 +117,22 @@ protected:
     EXPECT_TRUE(server_->api().fileExists("/dev/null"));
   }
 
+  void initializeWithHealthCheckParams(const std::string& bootstrap_path, const double timeout,
+                                       const double interval) {
+    options_.config_path_ = TestEnvironment::temporaryFileSubstitute(
+        bootstrap_path,
+        {{"health_check_timeout", fmt::format("{}", timeout).c_str()},
+         {"health_check_interval", fmt::format("{}", interval).c_str()}},
+        TestEnvironment::PortMap{}, version_);
+    server_.reset(new InstanceImpl(
+        options_,
+        Network::Address::InstanceConstSharedPtr(new Network::Address::Ipv4Instance("127.0.0.1")),
+        hooks_, restart_, stats_store_, fakelock_, component_factory_,
+        std::make_unique<NiceMock<Runtime::MockRandomGenerator>>(), thread_local_));
+
+    EXPECT_TRUE(server_->api().fileExists("/dev/null"));
+  }
+
   Network::Address::IpVersion version_;
   testing::NiceMock<MockOptions> options_;
   DefaultTestHooks hooks_;
@@ -148,6 +172,7 @@ TEST_P(ServerInstanceImplTest, Stats) {
   options_.service_node_name_ = "some_node_name";
   initialize(std::string());
   EXPECT_NE(nullptr, TestUtility::findCounter(stats_store_, "server.watchdog_miss"));
+  EXPECT_NE(nullptr, TestUtility::findGauge(stats_store_, "server.hot_restart_epoch"));
 }
 
 // Validate server localInfo() from bootstrap Node.
@@ -178,6 +203,41 @@ TEST_P(ServerInstanceImplTest, BootstrapNodeWithOptionsOverride) {
 TEST_P(ServerInstanceImplTest, BootstrapClusterManagerInitializationFail) {
   EXPECT_THROW_WITH_MESSAGE(initialize("test/server/cluster_dupe_bootstrap.yaml"), EnvoyException,
                             "cluster manager: duplicate cluster 'service_google'");
+}
+
+// Test for protoc-gen-validate constraint on invalid timeout entry of a health check config entry.
+TEST_P(ServerInstanceImplTest, BootstrapClusterHealthCheckInvalidTimeout) {
+  options_.v2_config_only_ = true;
+  EXPECT_THROW_WITH_REGEX(
+      initializeWithHealthCheckParams("test/server/cluster_health_check_bootstrap.yaml", 0, 0.25),
+      EnvoyException,
+      "HealthCheckValidationError.Timeout: \\[\"value must be greater than \" \"0s\"\\]");
+}
+
+// Test for protoc-gen-validate constraint on invalid interval entry of a health check config entry.
+TEST_P(ServerInstanceImplTest, BootstrapClusterHealthCheckInvalidInterval) {
+  options_.v2_config_only_ = true;
+  EXPECT_THROW_WITH_REGEX(
+      initializeWithHealthCheckParams("test/server/cluster_health_check_bootstrap.yaml", 0.5, 0),
+      EnvoyException,
+      "HealthCheckValidationError.Interval: \\[\"value must be greater than \" \"0s\"\\]");
+}
+
+// Test for protoc-gen-validate constraint on invalid timeout and interval entry of a health check
+// config entry.
+TEST_P(ServerInstanceImplTest, BootstrapClusterHealthCheckInvalidTimeoutAndInterval) {
+  options_.v2_config_only_ = true;
+  EXPECT_THROW_WITH_REGEX(
+      initializeWithHealthCheckParams("test/server/cluster_health_check_bootstrap.yaml", 0, 0),
+      EnvoyException,
+      "HealthCheckValidationError.Timeout: \\[\"value must be greater than \" \"0s\"\\]");
+}
+
+// Test for protoc-gen-validate constraint on valid interval entry of a health check config entry.
+TEST_P(ServerInstanceImplTest, BootstrapClusterHealthCheckValidTimeoutAndInterval) {
+  options_.v2_config_only_ = true;
+  EXPECT_NO_THROW(initializeWithHealthCheckParams("test/server/cluster_health_check_bootstrap.yaml",
+                                                  0.25, 0.5));
 }
 
 // Negative test for protoc-gen-validate constraints.
@@ -234,7 +294,8 @@ TEST_P(ServerInstanceImplTest, NoOptionsPassed) {
           Network::Address::InstanceConstSharedPtr(new Network::Address::Ipv4Instance("127.0.0.1")),
           hooks_, restart_, stats_store_, fakelock_, component_factory_,
           std::make_unique<NiceMock<Runtime::MockRandomGenerator>>(), thread_local_)),
-      EnvoyException, "unable to read file: ")
+      EnvoyException, "unable to read file: ");
 }
+
 } // namespace Server
 } // namespace Envoy

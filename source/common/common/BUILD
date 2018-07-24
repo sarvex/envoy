@@ -17,6 +17,17 @@ envoy_cc_library(
 )
 
 envoy_cc_library(
+    name = "backoff_lib",
+    srcs = ["backoff_strategy.cc"],
+    hdrs = ["backoff_strategy.h"],
+    deps = [
+        ":assert_lib",
+        "//include/envoy/common:backoff_strategy_interface",
+        "//include/envoy/runtime:runtime_interface",
+    ],
+)
+
+envoy_cc_library(
     name = "base64_lib",
     srcs = ["base64.cc"],
     hdrs = ["base64.h"],
@@ -88,8 +99,9 @@ envoy_cc_library(
     srcs = ["logger.cc"],
     hdrs = ["logger.h"],
     deps = [
+        ":lock_guard_lib",
         ":macros",
-        "//include/envoy/thread:thread_interface",
+        ":non_copyable",
     ],
 )
 
@@ -110,6 +122,21 @@ envoy_cc_library(
 envoy_cc_library(
     name = "macros",
     hdrs = ["macros.h"],
+)
+
+envoy_cc_library(
+    name = "matchers_lib",
+    srcs = ["matchers.cc"],
+    hdrs = ["matchers.h"],
+    external_deps = ["abseil_optional"],
+    deps = [
+        ":utility_lib",
+        "//source/common/config:metadata_lib",
+        "//source/common/protobuf",
+        "@envoy_api//envoy/type/matcher:metadata_cc",
+        "@envoy_api//envoy/type/matcher:number_cc",
+        "@envoy_api//envoy/type/matcher:string_cc",
+    ],
 )
 
 envoy_cc_library(
@@ -141,6 +168,15 @@ envoy_cc_library(
 )
 
 envoy_cc_library(
+    name = "lock_guard_lib",
+    hdrs = ["lock_guard.h"],
+    deps = [
+        ":thread_annotations",
+        "//include/envoy/thread:thread_interface",
+    ],
+)
+
+envoy_cc_library(
     name = "utility_lib",
     srcs = ["utility.cc"],
     hdrs = ["utility.h"],
@@ -149,6 +185,7 @@ envoy_cc_library(
         ":hash_lib",
         "//include/envoy/common:interval_set_interface",
         "//include/envoy/common:time_interface",
+        "//source/common/singleton:const_singleton",
     ],
 )
 
@@ -198,6 +235,8 @@ envoy_cc_library(
     deps = [
         ":assert_lib",
         ":logger_lib",
+        "//include/envoy/stats:stats_interface",
+        "//source/common/stats:stats_lib",
     ],
 )
 

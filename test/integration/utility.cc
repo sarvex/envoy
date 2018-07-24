@@ -36,13 +36,15 @@ void BufferingStreamDecoder::decodeHeaders(Http::HeaderMapPtr&& headers, bool en
 void BufferingStreamDecoder::decodeData(Buffer::Instance& data, bool end_stream) {
   ASSERT(!complete_);
   complete_ = end_stream;
-  body_.append(TestUtility::bufferToString(data));
+  body_.append(data.toString());
   if (complete_) {
     onComplete();
   }
 }
 
-void BufferingStreamDecoder::decodeTrailers(Http::HeaderMapPtr&&) { NOT_IMPLEMENTED; }
+void BufferingStreamDecoder::decodeTrailers(Http::HeaderMapPtr&&) {
+  NOT_IMPLEMENTED_GCOVR_EXCL_LINE;
+}
 
 void BufferingStreamDecoder::onComplete() {
   ASSERT(complete_);
@@ -55,7 +57,7 @@ BufferingStreamDecoderPtr
 IntegrationUtil::makeSingleRequest(const Network::Address::InstanceConstSharedPtr& addr,
                                    const std::string& method, const std::string& url,
                                    const std::string& body, Http::CodecClient::Type type,
-                                   const std::string& host) {
+                                   const std::string& host, const std::string& content_type) {
   Api::Impl api(std::chrono::milliseconds(9000));
   Event::DispatcherPtr dispatcher(api.allocateDispatcher());
   std::shared_ptr<Upstream::MockClusterInfo> cluster{new NiceMock<Upstream::MockClusterInfo>()};
@@ -78,6 +80,9 @@ IntegrationUtil::makeSingleRequest(const Network::Address::InstanceConstSharedPt
   headers.insertPath().value(url);
   headers.insertHost().value(host);
   headers.insertScheme().value(Http::Headers::get().SchemeValues.Http);
+  if (!content_type.empty()) {
+    headers.insertContentType().value(content_type);
+  }
   encoder.encodeHeaders(headers, body.empty());
   if (!body.empty()) {
     Buffer::OwnedImpl body_buffer(body);
@@ -88,12 +93,14 @@ IntegrationUtil::makeSingleRequest(const Network::Address::InstanceConstSharedPt
   return response;
 }
 
-BufferingStreamDecoderPtr IntegrationUtil::makeSingleRequest(
-    uint32_t port, const std::string& method, const std::string& url, const std::string& body,
-    Http::CodecClient::Type type, Network::Address::IpVersion ip_version, const std::string& host) {
+BufferingStreamDecoderPtr
+IntegrationUtil::makeSingleRequest(uint32_t port, const std::string& method, const std::string& url,
+                                   const std::string& body, Http::CodecClient::Type type,
+                                   Network::Address::IpVersion ip_version, const std::string& host,
+                                   const std::string& content_type) {
   auto addr = Network::Utility::resolveUrl(
       fmt::format("tcp://{}:{}", Network::Test::getLoopbackAddressUrlString(ip_version), port));
-  return makeSingleRequest(addr, method, url, body, type, host);
+  return makeSingleRequest(addr, method, url, body, type, host, content_type);
 }
 
 RawConnectionDriver::RawConnectionDriver(uint32_t port, Buffer::Instance& initial_data,
@@ -120,10 +127,11 @@ WaitForPayloadReader::WaitForPayloadReader(Event::Dispatcher& dispatcher)
     : dispatcher_(dispatcher) {}
 
 Network::FilterStatus WaitForPayloadReader::onData(Buffer::Instance& data, bool end_stream) {
-  data_.append(TestUtility::bufferToString(data));
+  data_.append(data.toString());
   data.drain(data.length());
   read_end_stream_ = end_stream;
-  if ((!data_to_wait_for_.empty() && data_.find(data_to_wait_for_) == 0) || end_stream) {
+  if ((!data_to_wait_for_.empty() && data_.find(data_to_wait_for_) == 0) ||
+      (exact_match_ == false && data_.find(data_to_wait_for_) != std::string::npos) || end_stream) {
     data_to_wait_for_.clear();
     dispatcher_.exit();
   }

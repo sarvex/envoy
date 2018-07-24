@@ -6,12 +6,14 @@
 #include <string>
 #include <vector>
 
+#include "common/grpc/common.h"
 #include "common/http/utility.h"
 
 namespace Envoy {
 namespace Http {
 
 const std::list<std::string> AsyncStreamImpl::NullCorsPolicy::allow_origin_;
+const std::list<std::regex> AsyncStreamImpl::NullCorsPolicy::allow_origin_regex_;
 const absl::optional<bool> AsyncStreamImpl::NullCorsPolicy::allow_credentials_;
 const std::vector<std::reference_wrapper<const Router::RateLimitPolicyEntry>>
     AsyncStreamImpl::NullRateLimitPolicy::rate_limit_policy_entry_;
@@ -34,7 +36,7 @@ AsyncClientImpl::AsyncClientImpl(const Upstream::ClusterInfo& cluster, Stats::St
                                  Runtime::RandomGenerator& random,
                                  Router::ShadowWriterPtr&& shadow_writer)
     : cluster_(cluster), config_("http.async-client.", local_info, stats_store, cm, runtime, random,
-                                 std::move(shadow_writer), true, false),
+                                 std::move(shadow_writer), true, false, false),
       dispatcher_(dispatcher) {}
 
 AsyncClientImpl::~AsyncClientImpl() {
@@ -110,6 +112,7 @@ void AsyncStreamImpl::encodeTrailers(HeaderMapPtr&& trailers) {
 }
 
 void AsyncStreamImpl::sendHeaders(HeaderMap& headers, bool end_stream) {
+  is_grpc_request_ = Grpc::Common::hasGrpcContentType(headers);
   headers.insertEnvoyInternalRequest().value().setReference(
       Headers::get().EnvoyInternalRequestValues.True);
   Utility::appendXff(headers, *parent_.config_.local_info_.address());

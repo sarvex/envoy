@@ -154,10 +154,10 @@ bool supportsIpVersion(const Address::IpVersion version) {
   }
   if (0 != addr->bind(fd)) {
     // Socket bind failed.
-    RELEASE_ASSERT(::close(fd) == 0);
+    RELEASE_ASSERT(::close(fd) == 0, "");
     return false;
   }
-  RELEASE_ASSERT(::close(fd) == 0);
+  RELEASE_ASSERT(::close(fd) == 0, "");
   return true;
 }
 
@@ -187,7 +187,17 @@ TransportSocketPtr createRawBufferSocket() { return std::make_unique<RawBufferSo
 
 TransportSocketFactoryPtr createRawBufferSocketFactory() {
   return std::make_unique<RawBufferSocketFactory>();
-};
+}
+
+const Network::FilterChainSharedPtr
+createEmptyFilterChain(TransportSocketFactoryPtr&& transport_socket_factory) {
+  return std::make_shared<Network::Test::EmptyFilterChain>(std::move(transport_socket_factory));
+}
+
+const Network::FilterChainSharedPtr createEmptyFilterChainWithRawBufferSockets() {
+  return createEmptyFilterChain(createRawBufferSocketFactory());
+}
+
 } // namespace Test
 } // namespace Network
 } // namespace Envoy

@@ -16,6 +16,12 @@ namespace Network {
 namespace Address {
 
 /**
+ * Returns true if the given family is supported on this machine.
+ * @param domain the IP family.
+ */
+bool ipFamilySupported(int domain);
+
+/**
  * Convert an address in the form of the socket address struct defined by Posix, Linux, etc. into
  * a Network::Address::Instance and return a pointer to it. Raises an EnvoyException on failure.
  * @param ss a valid address with family AF_INET, AF_INET6 or AF_UNIX.
@@ -48,7 +54,6 @@ InstanceConstSharedPtr peerAddressFromFd(int fd);
 class InstanceBase : public Instance {
 public:
   // Network::Address::Instance
-  bool operator==(const Instance& rhs) const override { return asString() == rhs.asString(); }
   const std::string& asString() const override { return friendly_name_; }
   // Default logical name is the human-readable name.
   const std::string& logicalName() const override { return asString(); }
@@ -91,6 +96,7 @@ public:
   explicit Ipv4Instance(uint32_t port);
 
   // Network::Address::Instance
+  bool operator==(const Instance& rhs) const override;
   int bind(int fd) const override;
   int connect(int fd) const override;
   const Ip* ip() const override { return &ip_; }
@@ -150,6 +156,7 @@ public:
   explicit Ipv6Instance(uint32_t port);
 
   // Network::Address::Instance
+  bool operator==(const Instance& rhs) const override;
   int bind(int fd) const override;
   int connect(int fd) const override;
   const Ip* ip() const override { return &ip_; }
@@ -206,6 +213,7 @@ public:
   explicit PipeInstance(const std::string& pipe_path);
 
   // Network::Address::Instance
+  bool operator==(const Instance& rhs) const override;
   int bind(int fd) const override;
   int connect(int fd) const override;
   const Ip* ip() const override { return nullptr; }

@@ -29,7 +29,10 @@ void XfccIntegrationTest::TearDown() {
   test_server_.reset();
   client_mtls_ssl_ctx_.reset();
   client_tls_ssl_ctx_.reset();
+  fake_upstream_connection_.reset();
   fake_upstreams_.clear();
+  HttpIntegrationTest::cleanupUpstreamAndDownstream();
+  codec_client_.reset();
   context_manager_.reset();
   runtime_.reset();
 }
@@ -57,7 +60,7 @@ Network::TransportSocketFactoryPtr XfccIntegrationTest::createClientSslContext(b
     target = json_tls;
   }
   Json::ObjectSharedPtr loader = TestEnvironment::jsonLoadFromString(target);
-  Ssl::ClientContextConfigImpl cfg(*loader);
+  Ssl::ClientContextConfigImpl cfg(*loader, secret_manager_);
   static auto* client_stats_store = new Stats::TestIsolatedStoreImpl();
   return Network::TransportSocketFactoryPtr{
       new Ssl::ClientSslSocketFactory(cfg, *context_manager_, *client_stats_store)};
@@ -72,11 +75,10 @@ Network::TransportSocketFactoryPtr XfccIntegrationTest::createUpstreamSslContext
 )EOF";
 
   Json::ObjectSharedPtr loader = TestEnvironment::jsonLoadFromString(json);
-  Ssl::ServerContextConfigImpl cfg(*loader);
+  Ssl::ServerContextConfigImpl cfg(*loader, secret_manager_);
   static Stats::Scope* upstream_stats_store = new Stats::TestIsolatedStoreImpl();
-  return std::make_unique<Ssl::ServerSslSocketFactory>(cfg, EMPTY_STRING,
-                                                       std::vector<std::string>{}, true,
-                                                       *context_manager_, *upstream_stats_store);
+  return std::make_unique<Ssl::ServerSslSocketFactory>(
+      cfg, *context_manager_, *upstream_stats_store, std::vector<std::string>{});
 }
 
 Network::ClientConnectionPtr XfccIntegrationTest::makeClientConnection() {
@@ -385,7 +387,7 @@ TEST_P(XfccIntegrationTest, TagExtractedNameGenerationTest) {
   // Commented sample code to regenerate the map literals used below in the test log if necessary:
 
   // std::cout << "tag_extracted_counter_map = {";
-  // std::list<Stats::CounterSharedPtr> counters = test_server_->counters();
+  // std::vector<Stats::CounterSharedPtr> counters = test_server_->counters();
   // for (auto it = counters.begin(); it != counters.end(); ++it) {
   //   if (it != counters.begin()) {
   //     std::cout << ",";
@@ -395,7 +397,7 @@ TEST_P(XfccIntegrationTest, TagExtractedNameGenerationTest) {
   // }
   // std::cout << "};" << std::endl;
   // std::cout << "tag_extracted_gauge_map = {";
-  // std::list<Stats::GaugeSharedPtr> gauges = test_server_->gauges();
+  // std::vector<Stats::GaugeSharedPtr> gauges = test_server_->gauges();
   // for (auto it = gauges.begin(); it != gauges.end(); ++it) {
   //   if (it != gauges.begin()) {
   //     std::cout << ",";

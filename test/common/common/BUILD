@@ -11,6 +11,23 @@ load(
 envoy_package()
 
 envoy_cc_test(
+    name = "backoff_strategy_test",
+    srcs = ["backoff_strategy_test.cc"],
+    deps = [
+        "//source/common/common:backoff_lib",
+        "//test/mocks/runtime:runtime_mocks",
+    ],
+)
+
+envoy_cc_test(
+    name = "assert_test",
+    srcs = ["assert_test.cc"],
+    deps = [
+        "//source/common/common:assert_lib",
+    ],
+)
+
+envoy_cc_test(
     name = "base64_test",
     srcs = ["base64_test.cc"],
     deps = [
@@ -24,6 +41,13 @@ envoy_cc_fuzz_test(
     srcs = ["base64_fuzz_test.cc"],
     corpus = "base64_corpus",
     deps = ["//source/common/common:base64_lib"],
+)
+
+envoy_cc_fuzz_test(
+    name = "utility_fuzz_test",
+    srcs = ["utility_fuzz_test.cc"],
+    corpus = "utility_corpus",
+    deps = ["//source/common/common:utility_lib"],
 )
 
 envoy_cc_test(
@@ -61,6 +85,20 @@ envoy_cc_test(
         "//test/mocks/http:http_mocks",
         "//test/mocks/network:network_mocks",
         "//test/mocks/upstream:upstream_mocks",
+    ],
+)
+
+envoy_cc_test(
+    name = "matchers_test",
+    srcs = ["matchers_test.cc"],
+    deps = [
+        "//source/common/common:matchers_lib",
+        "//source/common/config:metadata_lib",
+        "//source/common/protobuf:utility_lib",
+        "@envoy_api//envoy/api/v2/core:base_cc",
+        "@envoy_api//envoy/type/matcher:metadata_cc",
+        "@envoy_api//envoy/type/matcher:number_cc",
+        "@envoy_api//envoy/type/matcher:string_cc",
     ],
 )
 
@@ -118,8 +156,10 @@ envoy_cc_test(
     name = "block_memory_hash_set_test",
     srcs = ["block_memory_hash_set_test.cc"],
     deps = [
+        "//include/envoy/stats:stats_interface",
         "//source/common/common:block_memory_hash_set_lib",
         "//source/common/common:hash_lib",
+        "//source/common/stats:stats_lib",
     ],
 )
 
@@ -133,5 +173,14 @@ envoy_cc_binary(
     deps = [
         "//source/common/common:assert_lib",
         "//source/common/common:utility_lib",
+    ],
+)
+
+envoy_cc_test(
+    name = "lock_guard_test",
+    srcs = ["lock_guard_test.cc"],
+    deps = [
+        "//source/common/common:lock_guard_lib",
+        "//source/common/common:thread_lib",
     ],
 )

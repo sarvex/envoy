@@ -1,10 +1,12 @@
 #include "server/listener_manager_impl.h"
 
+#include "envoy/admin/v2alpha/config_dump.pb.h"
 #include "envoy/registry/registry.h"
 #include "envoy/server/transport_socket_config.h"
 
 #include "common/api/os_sys_calls_impl.h"
 #include "common/common/assert.h"
+#include "common/common/empty_string.h"
 #include "common/common/fmt.h"
 #include "common/config/utility.h"
 #include "common/network/listen_socket_impl.h"
@@ -17,7 +19,10 @@
 #include "server/drain_manager_impl.h"
 
 #include "extensions/filters/listener/well_known_names.h"
+#include "extensions/filters/network/well_known_names.h"
 #include "extensions/transport_sockets/well_known_names.h"
+
+#include "absl/strings/match.h"
 
 namespace Envoy {
 namespace Server {
@@ -109,9 +114,9 @@ ProdListenerComponentFactory::createDrainManager(envoy::api::v2::Listener::Drain
   return DrainManagerPtr{new DrainManagerImpl(server_, drain_type)};
 }
 
-ListenerImpl::ListenerImpl(const envoy::api::v2::Listener& config, ListenerManagerImpl& parent,
-                           const std::string& name, bool modifiable, bool workers_started,
-                           uint64_t hash)
+ListenerImpl::ListenerImpl(const envoy::api::v2::Listener& config, const std::string& version_info,
+                           ListenerManagerImpl& parent, const std::string& name, bool modifiable,
+                           bool workers_started, uint64_t hash)
     : parent_(parent), address_(Network::Address::resolveProtoAddress(config.address())),
       global_scope_(parent_.server_.stats().createScope("")),
       listener_scope_(
@@ -124,12 +129,7 @@ ListenerImpl::ListenerImpl(const envoy::api::v2::Listener& config, ListenerManag
       listener_tag_(parent_.factory_.nextListenerTag()), name_(name), modifiable_(modifiable),
       workers_started_(workers_started), hash_(hash),
       local_drain_manager_(parent.factory_.createDrainManager(config.drain_type())),
-      metadata_(config.has_metadata() ? config.metadata()
-                                      : envoy::api::v2::core::Metadata::default_instance()) {
-  // TODO(htuch): Support multiple filter chains #1280, add constraint to ensure we have at least on
-  // filter chain #1308.
-  ASSERT(config.filter_chains().size() >= 1);
-
+      config_(config), version_info_(version_info) {
   if (config.has_transparent()) {
     addListenSocketOptions(Network::SocketOptionFactory::buildIpTransparentOptions());
   }
@@ -141,6 +141,11 @@ ListenerImpl::ListenerImpl(const envoy::api::v2::Listener& config, ListenerManag
         config.tcp_fast_open_queue_length().value()));
   }
 
+  if (config.socket_options().size() > 0) {
+    addListenSocketOptions(
+        Network::SocketOptionFactory::buildLiteralOptions(config.socket_options()));
+  }
+
   if (!config.listener_filters().empty()) {
     listener_filter_factories_ =
         parent_.factory_.createListenerFilterFactoryList(config.listener_filters(), *this);
@@ -149,7 +154,7 @@ ListenerImpl::ListenerImpl(const envoy::api::v2::Listener& config, ListenerManag
   if (PROTOBUF_GET_WRAPPED_OR_DEFAULT(config, use_original_dst, false)) {
     auto& factory =
         Config::Utility::getAndCheckFactory<Configuration::NamedListenerFilterConfigFactory>(
-            Extensions::ListenerFilters::ListenerFilterNames::get().ORIGINAL_DST);
+            Extensions::ListenerFilters::ListenerFilterNames::get().OriginalDst);
     listener_filter_factories_.push_back(
         factory.createFilterFactoryFromProto(Envoy::ProtobufWkt::Empty(), *this));
   }
@@ -160,49 +165,35 @@ ListenerImpl::ListenerImpl(const envoy::api::v2::Listener& config, ListenerManag
   if (PROTOBUF_GET_WRAPPED_OR_DEFAULT(config.filter_chains()[0], use_proxy_proto, false)) {
     auto& factory =
         Config::Utility::getAndCheckFactory<Configuration::NamedListenerFilterConfigFactory>(
-            Extensions::ListenerFilters::ListenerFilterNames::get().PROXY_PROTOCOL);
+            Extensions::ListenerFilters::ListenerFilterNames::get().ProxyProtocol);
     listener_filter_factories_.push_back(
         factory.createFilterFactoryFromProto(Envoy::ProtobufWkt::Empty(), *this));
   }
 
-  // Skip lookup and update of the SSL Context if there is only one filter chain
-  // and it doesn't enforce any SNI restrictions.
-  const bool skip_context_update =
-      (config.filter_chains().size() == 1 &&
-       config.filter_chains()[0].filter_chain_match().sni_domains().empty());
+  bool need_tls_inspector = false;
+  std::unordered_set<envoy::api::v2::listener::FilterChainMatch, MessageUtil, MessageUtil>
+      filter_chains;
 
-  absl::optional<uint64_t> filters_hash;
-  uint32_t has_tls = 0;
-  uint32_t has_stk = 0;
   for (const auto& filter_chain : config.filter_chains()) {
-    std::vector<std::string> sni_domains(filter_chain.filter_chain_match().sni_domains().begin(),
-                                         filter_chain.filter_chain_match().sni_domains().end());
-    if (!filters_hash) {
-      filters_hash = RepeatedPtrUtil::hash(filter_chain.filters());
-      filter_factories_ =
-          parent_.factory_.createNetworkFilterFactoryList(filter_chain.filters(), *this);
-    } else if (filters_hash.value() != RepeatedPtrUtil::hash(filter_chain.filters())) {
-      throw EnvoyException(fmt::format("error adding listener '{}': use of different filter chains "
-                                       "is currently not supported",
+    const auto& filter_chain_match = filter_chain.filter_chain_match();
+    if (filter_chains.find(filter_chain_match) != filter_chains.end()) {
+      throw EnvoyException(fmt::format("error adding listener '{}': multiple filter chains with "
+                                       "the same matching rules are defined",
                                        address_->asString()));
     }
+    filter_chains.insert(filter_chain_match);
 
-    // If the cluster doesn't have transport socke configured, override with default transport
-    // socket implementation based on tls_context. We copy by value first then override if
-    // neccessary.
+    // If the cluster doesn't have transport socket configured, then use the default "raw_buffer"
+    // transport socket or BoringSSL-based "tls" transport socket if TLS settings are configured.
+    // We copy by value first then override if necessary.
     auto transport_socket = filter_chain.transport_socket();
     if (!filter_chain.has_transport_socket()) {
       if (filter_chain.has_tls_context()) {
-        transport_socket.set_name(Extensions::TransportSockets::TransportSocketNames::get().SSL);
+        transport_socket.set_name(Extensions::TransportSockets::TransportSocketNames::get().Tls);
         MessageUtil::jsonConvert(filter_chain.tls_context(), *transport_socket.mutable_config());
-
-        has_tls++;
-        if (filter_chain.tls_context().has_session_ticket_keys()) {
-          has_stk++;
-        }
       } else {
         transport_socket.set_name(
-            Extensions::TransportSockets::TransportSocketNames::get().RAW_BUFFER);
+            Extensions::TransportSockets::TransportSocketNames::get().RawBuffer);
       }
     }
 
@@ -211,27 +202,80 @@ ListenerImpl::ListenerImpl(const envoy::api::v2::Listener& config, ListenerManag
     ProtobufTypes::MessagePtr message =
         Config::Utility::translateToFactoryConfig(transport_socket, config_factory);
 
-    // Each transport socket factory owns one SslServerContext, we need to store them all in a
-    // vector since Ssl::ContextManager doesn't own SslServerContext. While transportSocketFacotry()
-    // always returns the first element of transport_socket_factories_, other transport socket
-    // factories are needed when the default Ssl::ServerContext updates SSL context based on
-    // ClientHello. This behavior is a workaround for initial SNI support before the full SNI based
-    // filter chain match is implemented.
-    transport_socket_factories_.emplace_back(config_factory.createTransportSocketFactory(
-        name_, sni_domains, skip_context_update, *message, *this));
-    ASSERT(transport_socket_factories_.back() != nullptr);
-  }
-  ASSERT(!transport_socket_factories_.empty());
+    // Validate IP addresses.
+    std::vector<std::string> destination_ips;
+    for (const auto& destination_ip : filter_chain_match.prefix_ranges()) {
+      const auto& cidr_range = Network::Address::CidrRange::create(destination_ip);
+      destination_ips.push_back(cidr_range.asString());
+    }
 
-  // TODO(PiotrSikora): allow filter chains with mixed use of Session Ticket Keys.
-  // This doesn't work right now, because BoringSSL uses "session context" (initial SSL_CTX that
-  // accepted connection, before SNI update) for session related stuff, including Session Ticket
-  // callback, which is going to be called iff it's set on the initial SSL_CTX, even if it's not
-  // set on the current SSL_CTX that doesn't have any Session Ticket Keys configured.
-  if (has_stk != 0 && has_stk != has_tls) {
-    throw EnvoyException(fmt::format("error adding listener '{}': filter chains with mixed use of "
-                                     "Session Ticket Keys are currently not supported",
-                                     address_->asString()));
+    std::vector<std::string> server_names;
+    if (!filter_chain_match.server_names().empty()) {
+      if (!filter_chain_match.sni_domains().empty()) {
+        throw EnvoyException(
+            fmt::format("error adding listener '{}': both \"server_names\" and the deprecated "
+                        "\"sni_domains\" are used, please merge the list of expected server names "
+                        "into \"server_names\" and remove \"sni_domains\"",
+                        address_->asString()));
+      }
+
+      server_names.assign(filter_chain_match.server_names().begin(),
+                          filter_chain_match.server_names().end());
+    } else if (!filter_chain_match.sni_domains().empty()) {
+      server_names.assign(filter_chain_match.sni_domains().begin(),
+                          filter_chain_match.sni_domains().end());
+    }
+
+    // Reject partial wildcards, we don't match on them.
+    for (const auto& server_name : server_names) {
+      if (server_name.find('*') != std::string::npos && !isWildcardServerName(server_name)) {
+        throw EnvoyException(
+            fmt::format("error adding listener '{}': partial wildcards are not supported in "
+                        "\"server_names\" (or the deprecated \"sni_domains\")",
+                        address_->asString()));
+      }
+    }
+
+    std::vector<std::string> application_protocols(
+        filter_chain_match.application_protocols().begin(),
+        filter_chain_match.application_protocols().end());
+
+    addFilterChain(PROTOBUF_GET_WRAPPED_OR_DEFAULT(filter_chain_match, destination_port, 0),
+                   destination_ips, server_names, filter_chain_match.transport_protocol(),
+                   application_protocols,
+                   config_factory.createTransportSocketFactory(*message, *this, server_names),
+                   parent_.factory_.createNetworkFilterFactoryList(filter_chain.filters(), *this));
+
+    need_tls_inspector |= filter_chain_match.transport_protocol() == "tls" ||
+                          (filter_chain_match.transport_protocol().empty() &&
+                           (!server_names.empty() || !application_protocols.empty()));
+  }
+
+  // Convert DestinationIPsMap to DestinationIPsTrie for faster lookups.
+  convertDestinationIPsMapToTrie();
+
+  // Automatically inject TLS Inspector if it wasn't configured explicitly and it's needed.
+  if (need_tls_inspector) {
+    for (const auto& filter : config.listener_filters()) {
+      if (filter.name() == Extensions::ListenerFilters::ListenerFilterNames::get().TlsInspector) {
+        need_tls_inspector = false;
+        break;
+      }
+    }
+    if (need_tls_inspector) {
+      const std::string message =
+          fmt::format("adding listener '{}': filter chain match rules require TLS Inspector "
+                      "listener filter, but it isn't configured, trying to inject it "
+                      "(this might fail if Envoy is compiled without it)",
+                      address_->asString());
+      ENVOY_LOG(warn, "{}", message);
+
+      auto& factory =
+          Config::Utility::getAndCheckFactory<Configuration::NamedListenerFilterConfigFactory>(
+              Extensions::ListenerFilters::ListenerFilterNames::get().TlsInspector);
+      listener_filter_factories_.push_back(
+          factory.createFilterFactoryFromProto(Envoy::ProtobufWkt::Empty(), *this));
+    }
   }
 }
 
@@ -242,11 +286,235 @@ ListenerImpl::~ListenerImpl() {
   // active. This is done here explicitly by setting a boolean and then clearing the factory
   // vector for clarity.
   initialize_canceled_ = true;
-  filter_factories_.clear();
+  destination_ports_map_.clear();
 }
 
-bool ListenerImpl::createNetworkFilterChain(Network::Connection& connection) {
-  return Configuration::FilterChainUtility::buildFilterChain(connection, filter_factories_);
+bool ListenerImpl::isWildcardServerName(const std::string& name) {
+  return absl::StartsWith(name, "*.");
+}
+
+void ListenerImpl::addFilterChain(uint16_t destination_port,
+                                  const std::vector<std::string>& destination_ips,
+                                  const std::vector<std::string>& server_names,
+                                  const std::string& transport_protocol,
+                                  const std::vector<std::string>& application_protocols,
+                                  Network::TransportSocketFactoryPtr&& transport_socket_factory,
+                                  std::vector<Network::FilterFactoryCb> filters_factory) {
+  const auto filter_chain = std::make_shared<FilterChainImpl>(std::move(transport_socket_factory),
+                                                              std::move(filters_factory));
+  addFilterChainForDestinationPorts(destination_ports_map_, destination_port, destination_ips,
+                                    server_names, transport_protocol, application_protocols,
+                                    filter_chain);
+}
+
+void ListenerImpl::addFilterChainForDestinationPorts(
+    DestinationPortsMap& destination_ports_map, uint16_t destination_port,
+    const std::vector<std::string>& destination_ips, const std::vector<std::string>& server_names,
+    const std::string& transport_protocol, const std::vector<std::string>& application_protocols,
+    const Network::FilterChainSharedPtr& filter_chain) {
+  if (destination_ports_map.find(destination_port) == destination_ports_map.end()) {
+    destination_ports_map[destination_port] =
+        std::make_pair<DestinationIPsMap, DestinationIPsTriePtr>(DestinationIPsMap{}, nullptr);
+  }
+  addFilterChainForDestinationIPs(destination_ports_map[destination_port].first, destination_ips,
+                                  server_names, transport_protocol, application_protocols,
+                                  filter_chain);
+}
+
+void ListenerImpl::addFilterChainForDestinationIPs(
+    DestinationIPsMap& destination_ips_map, const std::vector<std::string>& destination_ips,
+    const std::vector<std::string>& server_names, const std::string& transport_protocol,
+    const std::vector<std::string>& application_protocols,
+    const Network::FilterChainSharedPtr& filter_chain) {
+  if (destination_ips.empty()) {
+    addFilterChainForServerNames(destination_ips_map[EMPTY_STRING], server_names,
+                                 transport_protocol, application_protocols, filter_chain);
+  } else {
+    for (const auto& destination_ip : destination_ips) {
+      addFilterChainForServerNames(destination_ips_map[destination_ip], server_names,
+                                   transport_protocol, application_protocols, filter_chain);
+    }
+  }
+}
+
+void ListenerImpl::addFilterChainForServerNames(
+    ServerNamesMap& server_names_map, const std::vector<std::string>& server_names,
+    const std::string& transport_protocol, const std::vector<std::string>& application_protocols,
+    const Network::FilterChainSharedPtr& filter_chain) {
+  if (server_names.empty()) {
+    addFilterChainForApplicationProtocols(server_names_map[EMPTY_STRING][transport_protocol],
+                                          application_protocols, filter_chain);
+  } else {
+    for (const auto& server_name : server_names) {
+      if (isWildcardServerName(server_name)) {
+        // Add mapping for the wildcard domain, i.e. ".example.com" for "*.example.com".
+        addFilterChainForApplicationProtocols(
+            server_names_map[server_name.substr(1)][transport_protocol], application_protocols,
+            filter_chain);
+      } else {
+        addFilterChainForApplicationProtocols(server_names_map[server_name][transport_protocol],
+                                              application_protocols, filter_chain);
+      }
+    }
+  }
+}
+
+void ListenerImpl::addFilterChainForApplicationProtocols(
+    ApplicationProtocolsMap& application_protocols_map,
+    const std::vector<std::string>& application_protocols,
+    const Network::FilterChainSharedPtr& filter_chain) {
+  if (application_protocols.empty()) {
+    application_protocols_map[EMPTY_STRING] = filter_chain;
+  } else {
+    for (const auto& application_protocol : application_protocols) {
+      application_protocols_map[application_protocol] = filter_chain;
+    }
+  }
+}
+
+void ListenerImpl::convertDestinationIPsMapToTrie() {
+  for (auto& port : destination_ports_map_) {
+    auto& destination_ips_pair = port.second;
+    auto& destination_ips_map = destination_ips_pair.first;
+    std::vector<std::pair<ServerNamesMapSharedPtr, std::vector<Network::Address::CidrRange>>> list;
+    for (const auto& entry : destination_ips_map) {
+      std::vector<Network::Address::CidrRange> subnets;
+      if (entry.first == EMPTY_STRING) {
+        if (Network::Address::ipFamilySupported(AF_INET)) {
+          subnets.push_back(Network::Address::CidrRange::create("0.0.0.0/0"));
+        }
+        if (Network::Address::ipFamilySupported(AF_INET6)) {
+          subnets.push_back(Network::Address::CidrRange::create("::/0"));
+        }
+      } else {
+        subnets.push_back(Network::Address::CidrRange::create(entry.first));
+      }
+      list.push_back(
+          std::make_pair<ServerNamesMapSharedPtr, std::vector<Network::Address::CidrRange>>(
+              std::make_shared<ServerNamesMap>(entry.second),
+              std::vector<Network::Address::CidrRange>(subnets)));
+    }
+    destination_ips_pair.second = std::make_unique<DestinationIPsTrie>(list, true);
+  }
+}
+
+const Network::FilterChain*
+ListenerImpl::findFilterChain(const Network::ConnectionSocket& socket) const {
+  const auto& address = socket.localAddress();
+
+  // Match on destination port (only for IP addresses).
+  if (address->type() == Network::Address::Type::Ip) {
+    const auto port_match = destination_ports_map_.find(address->ip()->port());
+    if (port_match != destination_ports_map_.end()) {
+      return findFilterChainForDestinationIP(*port_match->second.second, socket);
+    }
+  }
+
+  // Match on catch-all port 0.
+  const auto port_match = destination_ports_map_.find(0);
+  if (port_match != destination_ports_map_.end()) {
+    return findFilterChainForDestinationIP(*port_match->second.second, socket);
+  }
+
+  return nullptr;
+}
+
+const Network::FilterChain*
+ListenerImpl::findFilterChainForDestinationIP(const DestinationIPsTrie& destination_ips_trie,
+                                              const Network::ConnectionSocket& socket) const {
+  // Use invalid IP address (matching only filter chains without IP requirements) for UDS.
+  static const auto& fake_address = Network::Utility::parseInternetAddress("255.255.255.255");
+
+  auto address = socket.localAddress();
+  if (address->type() != Network::Address::Type::Ip) {
+    address = fake_address;
+  }
+
+  // Match on both: exact IP and wider CIDR ranges using LcTrie.
+  const auto& data = destination_ips_trie.getData(address);
+  if (!data.empty()) {
+    ASSERT(data.size() == 1);
+    return findFilterChainForServerName(*data.back(), socket);
+  }
+
+  return nullptr;
+}
+
+const Network::FilterChain*
+ListenerImpl::findFilterChainForServerName(const ServerNamesMap& server_names_map,
+                                           const Network::ConnectionSocket& socket) const {
+  const std::string server_name(socket.requestedServerName());
+
+  // Match on exact server name, i.e. "www.example.com" for "www.example.com".
+  const auto server_name_exact_match = server_names_map.find(server_name);
+  if (server_name_exact_match != server_names_map.end()) {
+    return findFilterChainForTransportProtocol(server_name_exact_match->second, socket);
+  }
+
+  // Match on all wildcard domains, i.e. ".example.com" and ".com" for "www.example.com".
+  size_t pos = server_name.find('.', 1);
+  while (pos < server_name.size() - 1 && pos != std::string::npos) {
+    const std::string wildcard = server_name.substr(pos);
+    const auto server_name_wildcard_match = server_names_map.find(wildcard);
+    if (server_name_wildcard_match != server_names_map.end()) {
+      return findFilterChainForTransportProtocol(server_name_wildcard_match->second, socket);
+    }
+    pos = server_name.find('.', pos + 1);
+  }
+
+  // Match on a filter chain without server name requirements.
+  const auto server_name_catchall_match = server_names_map.find(EMPTY_STRING);
+  if (server_name_catchall_match != server_names_map.end()) {
+    return findFilterChainForTransportProtocol(server_name_catchall_match->second, socket);
+  }
+
+  return nullptr;
+}
+
+const Network::FilterChain* ListenerImpl::findFilterChainForTransportProtocol(
+    const TransportProtocolsMap& transport_protocols_map,
+    const Network::ConnectionSocket& socket) const {
+  const std::string transport_protocol(socket.detectedTransportProtocol());
+
+  // Match on exact transport protocol, e.g. "tls".
+  const auto transport_protocol_match = transport_protocols_map.find(transport_protocol);
+  if (transport_protocol_match != transport_protocols_map.end()) {
+    return findFilterChainForApplicationProtocols(transport_protocol_match->second, socket);
+  }
+
+  // Match on a filter chain without transport protocol requirements.
+  const auto any_protocol_match = transport_protocols_map.find(EMPTY_STRING);
+  if (any_protocol_match != transport_protocols_map.end()) {
+    return findFilterChainForApplicationProtocols(any_protocol_match->second, socket);
+  }
+
+  return nullptr;
+}
+
+const Network::FilterChain* ListenerImpl::findFilterChainForApplicationProtocols(
+    const ApplicationProtocolsMap& application_protocols_map,
+    const Network::ConnectionSocket& socket) const {
+  // Match on exact application protocol, e.g. "h2" or "http/1.1".
+  for (const auto& application_protocol : socket.requestedApplicationProtocols()) {
+    const auto application_protocol_match = application_protocols_map.find(application_protocol);
+    if (application_protocol_match != application_protocols_map.end()) {
+      return application_protocol_match->second.get();
+    }
+  }
+
+  // Match on a filter chain without application protocol requirements.
+  const auto any_protocol_match = application_protocols_map.find(EMPTY_STRING);
+  if (any_protocol_match != application_protocols_map.end()) {
+    return any_protocol_match->second.get();
+  }
+
+  return nullptr;
+}
+
+bool ListenerImpl::createNetworkFilterChain(
+    Network::Connection& connection,
+    const std::vector<Network::FilterFactoryCb>& filter_factories) {
+  return Configuration::FilterChainUtility::buildFilterChain(connection, filter_factories);
 }
 
 bool ListenerImpl::createListenerFilterChain(Network::ListenerFilterManager& manager) {
@@ -266,6 +534,7 @@ void ListenerImpl::debugLog(const std::string& message) {
 }
 
 void ListenerImpl::initialize() {
+  last_updated_ = systemTimeSource().currentTime();
   // If workers have already started, we shift from using the global init manager to using a local
   // per listener init manager. See ~ListenerImpl() for why we gate the onListenerWarmed() call
   // with initialize_canceled_.
@@ -294,7 +563,7 @@ void ListenerImpl::setSocket(const Network::SocketSharedPtr& socket) {
   if (socket_ && listen_socket_options_) {
     // 'pre_bind = false' as bind() is never done after this.
     bool ok = Network::Socket::applyOptions(listen_socket_options_, *socket_,
-                                            Network::Socket::SocketState::PostBind);
+                                            envoy::api::v2::core::SocketOption::STATE_BOUND);
     const std::string message =
         fmt::format("{}: Setting socket options {}", name_, ok ? "succeeded" : "failed");
     if (!ok) {
@@ -304,7 +573,7 @@ void ListenerImpl::setSocket(const Network::SocketSharedPtr& socket) {
       ENVOY_LOG(debug, "{}", message);
     }
 
-    // Add the options to the socket_ so that SocketState::Listening options can be
+    // Add the options to the socket_ so that STATE_LISTENING options can be
     // set in the worker after listen()/evconnlistener_new() is called.
     socket_->addOptions(listen_socket_options_);
   }
@@ -312,11 +581,52 @@ void ListenerImpl::setSocket(const Network::SocketSharedPtr& socket) {
 
 ListenerManagerImpl::ListenerManagerImpl(Instance& server,
                                          ListenerComponentFactory& listener_factory,
-                                         WorkerFactory& worker_factory)
-    : server_(server), factory_(listener_factory), stats_(generateStats(server.stats())) {
+                                         WorkerFactory& worker_factory,
+                                         SystemTimeSource& system_time_source)
+    : server_(server), system_time_source_(system_time_source), factory_(listener_factory),
+      stats_(generateStats(server.stats())),
+      config_tracker_entry_(server.admin().getConfigTracker().add(
+          "listeners", [this] { return dumpListenerConfigs(); })) {
   for (uint32_t i = 0; i < std::max(1U, server.options().concurrency()); i++) {
     workers_.emplace_back(worker_factory.createWorker());
   }
+}
+
+ProtobufTypes::MessagePtr ListenerManagerImpl::dumpListenerConfigs() {
+  auto config_dump = std::make_unique<envoy::admin::v2alpha::ListenersConfigDump>();
+  config_dump->set_version_info(lds_api_ != nullptr ? lds_api_->versionInfo() : "");
+  for (const auto& listener : active_listeners_) {
+    if (listener->blockRemove()) {
+      auto& static_listener = *config_dump->mutable_static_listeners()->Add();
+      static_listener.mutable_listener()->MergeFrom(listener->config());
+      TimestampUtil::systemClockToTimestamp(listener->last_updated_,
+                                            *(static_listener.mutable_last_updated()));
+    } else {
+      auto& dynamic_listener = *config_dump->mutable_dynamic_active_listeners()->Add();
+      dynamic_listener.set_version_info(listener->versionInfo());
+      dynamic_listener.mutable_listener()->MergeFrom(listener->config());
+      TimestampUtil::systemClockToTimestamp(listener->last_updated_,
+                                            *(dynamic_listener.mutable_last_updated()));
+    }
+  }
+
+  for (const auto& listener : warming_listeners_) {
+    auto& dynamic_listener = *config_dump->mutable_dynamic_warming_listeners()->Add();
+    dynamic_listener.set_version_info(listener->versionInfo());
+    dynamic_listener.mutable_listener()->MergeFrom(listener->config());
+    TimestampUtil::systemClockToTimestamp(listener->last_updated_,
+                                          *(dynamic_listener.mutable_last_updated()));
+  }
+
+  for (const auto& listener : draining_listeners_) {
+    auto& dynamic_listener = *config_dump->mutable_dynamic_draining_listeners()->Add();
+    dynamic_listener.set_version_info(listener.listener_->versionInfo());
+    dynamic_listener.mutable_listener()->MergeFrom(listener.listener_->config());
+    TimestampUtil::systemClockToTimestamp(listener.listener_->last_updated_,
+                                          *(dynamic_listener.mutable_last_updated()));
+  }
+
+  return config_dump;
 }
 
 ListenerManagerStats ListenerManagerImpl::generateStats(Stats::Scope& scope) {
@@ -326,7 +636,7 @@ ListenerManagerStats ListenerManagerImpl::generateStats(Stats::Scope& scope) {
 }
 
 bool ListenerManagerImpl::addOrUpdateListener(const envoy::api::v2::Listener& config,
-                                              bool modifiable) {
+                                              const std::string& version_info, bool modifiable) {
   std::string name;
   if (!config.name().empty()) {
     name = config.name();
@@ -350,7 +660,7 @@ bool ListenerManagerImpl::addOrUpdateListener(const envoy::api::v2::Listener& co
   }
 
   ListenerImplPtr new_listener(
-      new ListenerImpl(config, *this, name, modifiable, workers_started_, hash));
+      new ListenerImpl(config, version_info, *this, name, modifiable, workers_started_, hash));
   ListenerImpl& new_listener_ref = *new_listener;
 
   // We mandate that a listener with the same name must have the same configured address. This

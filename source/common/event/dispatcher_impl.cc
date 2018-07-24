@@ -3,7 +3,6 @@
 #include <chrono>
 #include <cstdint>
 #include <functional>
-#include <mutex>
 #include <string>
 #include <vector>
 
@@ -11,6 +10,7 @@
 #include "envoy/network/listener.h"
 
 #include "common/buffer/buffer_impl.h"
+#include "common/common/lock_guard.h"
 #include "common/event/file_event_impl.h"
 #include "common/event/signal_impl.h"
 #include "common/event/timer_impl.h"
@@ -27,7 +27,7 @@ namespace Event {
 DispatcherImpl::DispatcherImpl()
     : DispatcherImpl(Buffer::WatermarkFactoryPtr{new Buffer::WatermarkBufferFactory}) {
   // The dispatcher won't work as expected if libevent hasn't been configured to use threads.
-  RELEASE_ASSERT(Libevent::Global::initialized());
+  RELEASE_ASSERT(Libevent::Global::initialized(), "");
 }
 
 DispatcherImpl::DispatcherImpl(Buffer::WatermarkFactoryPtr&& factory)
@@ -35,7 +35,7 @@ DispatcherImpl::DispatcherImpl(Buffer::WatermarkFactoryPtr&& factory)
       deferred_delete_timer_(createTimer([this]() -> void { clearDeferredDeleteList(); })),
       post_timer_(createTimer([this]() -> void { runPostCallbacks(); })),
       current_to_delete_(&to_delete_1_) {
-  RELEASE_ASSERT(Libevent::Global::initialized());
+  RELEASE_ASSERT(Libevent::Global::initialized(), "");
 }
 
 DispatcherImpl::~DispatcherImpl() {}
@@ -139,7 +139,7 @@ SignalEventPtr DispatcherImpl::listenForSignal(int signal_num, SignalCb cb) {
 void DispatcherImpl::post(std::function<void()> callback) {
   bool do_post;
   {
-    std::unique_lock<std::mutex> lock(post_lock_);
+    Thread::LockGuard lock(post_lock_);
     do_post = post_callbacks_.empty();
     post_callbacks_.push_back(callback);
   }
@@ -162,14 +162,23 @@ void DispatcherImpl::run(RunType type) {
 }
 
 void DispatcherImpl::runPostCallbacks() {
-  std::unique_lock<std::mutex> lock(post_lock_);
-  while (!post_callbacks_.empty()) {
-    std::function<void()> callback = post_callbacks_.front();
-    post_callbacks_.pop_front();
-
-    lock.unlock();
+  while (true) {
+    // It is important that this declaration is inside the body of the loop so that the callback is
+    // destructed while post_lock_ is not held. If callback is declared outside the loop and reused
+    // for each iteration, the previous iteration's callback is destructed when callback is
+    // re-assigned, which happens while holding the lock. This can lead to a deadlock (via
+    // recursive mutex acquisition) if destroying the callback runs a destructor, which through some
+    // callstack calls post() on this dispatcher.
+    std::function<void()> callback;
+    {
+      Thread::LockGuard lock(post_lock_);
+      if (post_callbacks_.empty()) {
+        return;
+      }
+      callback = post_callbacks_.front();
+      post_callbacks_.pop_front();
+    }
     callback();
-    lock.lock();
   }
 }
 

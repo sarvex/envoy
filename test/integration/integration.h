@@ -76,11 +76,11 @@ public:
                        Network::Address::IpVersion version, bool enable_half_close = false);
 
   void close();
-  void waitForData(const std::string& data);
-  void waitForDisconnect();
+  void waitForData(const std::string& data, bool exact_match = true);
+  void waitForDisconnect(bool ignore_spurious_events = false);
   void waitForHalfClose();
   void readDisable(bool disabled);
-  void write(const std::string& data, bool end_stream = false);
+  void write(const std::string& data, bool end_stream = false, bool verify = true);
   const std::string& data() { return payload_reader_->data(); }
   bool connected() const { return !disconnected_; }
 

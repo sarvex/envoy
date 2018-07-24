@@ -35,10 +35,11 @@ CdsApiImpl::CdsApiImpl(const envoy::api::v2::core::ConfigSource& cds_config,
   subscription_ =
       Config::SubscriptionFactory::subscriptionFromConfigSource<envoy::api::v2::Cluster>(
           cds_config, local_info.node(), dispatcher, cm, random, *scope_,
-          [this, &cds_config, &eds_config, &cm, &dispatcher, &random,
-           &local_info]() -> Config::Subscription<envoy::api::v2::Cluster>* {
+          [this, &cds_config, &eds_config, &cm, &dispatcher, &random, &local_info,
+           &scope]() -> Config::Subscription<envoy::api::v2::Cluster>* {
             return new CdsSubscription(Config::Utility::generateStats(*scope_), cds_config,
-                                       eds_config, cm, dispatcher, random, local_info);
+                                       eds_config, cm, dispatcher, random, local_info,
+                                       scope.statsOptions());
           },
           "envoy.api.v2.ClusterDiscoveryService.FetchClusters",
           "envoy.api.v2.ClusterDiscoveryService.StreamClusters");
@@ -55,7 +56,7 @@ void CdsApiImpl::onConfigUpdate(const ResourceVector& resources, const std::stri
   for (auto& cluster : resources) {
     const std::string cluster_name = cluster.name();
     clusters_to_remove.erase(cluster_name);
-    if (cm_.addOrUpdateCluster(cluster)) {
+    if (cm_.addOrUpdateCluster(cluster, version_info)) {
       ENVOY_LOG(debug, "cds: add/update cluster '{}'", cluster_name);
     }
   }

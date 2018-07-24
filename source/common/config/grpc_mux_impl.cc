@@ -12,10 +12,12 @@ namespace Config {
 GrpcMuxImpl::GrpcMuxImpl(const envoy::api::v2::core::Node& node, Grpc::AsyncClientPtr async_client,
                          Event::Dispatcher& dispatcher,
                          const Protobuf::MethodDescriptor& service_method,
-                         MonotonicTimeSource& time_source)
+                         Runtime::RandomGenerator& random, MonotonicTimeSource& time_source)
     : node_(node), async_client_(std::move(async_client)), service_method_(service_method),
-      time_source_(time_source) {
+      random_(random), time_source_(time_source) {
   retry_timer_ = dispatcher.createTimer([this]() -> void { establishNewStream(); });
+  backoff_strategy_ = std::make_unique<JitteredBackOffStrategy>(RETRY_INITIAL_DELAY_MS,
+                                                                RETRY_MAX_DELAY_MS, random_);
 }
 
 GrpcMuxImpl::~GrpcMuxImpl() {
@@ -29,7 +31,7 @@ GrpcMuxImpl::~GrpcMuxImpl() {
 void GrpcMuxImpl::start() { establishNewStream(); }
 
 void GrpcMuxImpl::setRetryTimer() {
-  retry_timer_->enableTimer(std::chrono::milliseconds(RETRY_DELAY_MS));
+  retry_timer_->enableTimer(std::chrono::milliseconds(backoff_strategy_->nextBackOffMs()));
 }
 
 void GrpcMuxImpl::establishNewStream() {
@@ -156,14 +158,33 @@ void GrpcMuxImpl::onReceiveInitialMetadata(Http::HeaderMapPtr&& metadata) {
 }
 
 void GrpcMuxImpl::onReceiveMessage(std::unique_ptr<envoy::api::v2::DiscoveryResponse>&& message) {
+  // Reset here so that it starts with fresh backoff interval on next disconnect.
+  backoff_strategy_->reset();
+
   const std::string& type_url = message->type_url();
   ENVOY_LOG(debug, "Received gRPC message for {} at version {}", type_url, message->version_info());
   if (api_state_.count(type_url) == 0) {
     ENVOY_LOG(warn, "Ignoring unknown type URL {}", type_url);
+    // TODO(yuval-k): This should never happen. consider dropping the stream as this is a protocol
+    // violation
     return;
   }
   if (api_state_[type_url].watches_.empty()) {
-    ENVOY_LOG(warn, "Ignoring unwatched type URL {}", type_url);
+    // update the nonce as we are processing this response.
+    api_state_[type_url].request_.set_response_nonce(message->nonce());
+    if (message->resources().empty()) {
+      // No watches and no resources. This can happen when envoy unregisters from a resource
+      // that's removed from the server as well. For example, a deleted cluster triggers un-watching
+      // the ClusterLoadAssignment watch, and at the same time the xDS server sends an empty list of
+      // ClusterLoadAssignment resources. we'll accept this update. no need to send a discovery
+      // request, as we don't watch for anything.
+      api_state_[type_url].request_.set_version_info(message->version_info());
+    } else {
+      // No watches and we have resources - this should not happen. send a NACK (by not updating
+      // the version).
+      ENVOY_LOG(warn, "Ignoring unwatched type URL {}", type_url);
+      sendDiscoveryRequest(type_url);
+    }
     return;
   }
   try {

@@ -12,13 +12,15 @@
 #include "common/common/enum_to_int.h"
 #include "common/common/fmt.h"
 #include "common/common/utility.h"
+#include "common/grpc/status.h"
 #include "common/http/exception.h"
 #include "common/http/header_map_impl.h"
 #include "common/http/headers.h"
+#include "common/http/message_impl.h"
 #include "common/network/utility.h"
 #include "common/protobuf/utility.h"
 
-#include "absl/strings/string_view.h"
+#include "absl/strings/str_cat.h"
 
 namespace Envoy {
 namespace Http {
@@ -28,6 +30,7 @@ void Utility::appendXff(HeaderMap& headers, const Network::Address::Instance& re
     return;
   }
 
+  // TODO(alyssawilk) move over to the append utility.
   HeaderString& header = headers.insertForwardedFor().value();
   if (!header.empty()) {
     header.append(", ", 2);
@@ -35,6 +38,14 @@ void Utility::appendXff(HeaderMap& headers, const Network::Address::Instance& re
 
   const std::string& address_as_string = remote_address.ip()->addressAsString();
   header.append(address_as_string.c_str(), address_as_string.size());
+}
+
+void Utility::appendVia(HeaderMap& headers, const std::string& via) {
+  HeaderString& header = headers.insertVia().value();
+  if (!header.empty()) {
+    header.append(", ", 2);
+  }
+  header.append(via.c_str(), via.size());
 }
 
 std::string Utility::createSslRedirectPath(const HeaderMap& headers) {
@@ -125,8 +136,23 @@ std::string Utility::parseCookieValue(const HeaderMap& headers, const std::strin
 }
 
 std::string Utility::makeSetCookieValue(const std::string& key, const std::string& value,
-                                        const std::chrono::seconds max_age) {
-  return fmt::format("{}=\"{}\"; Max-Age={}", key, value, max_age.count());
+                                        const std::string& path, const std::chrono::seconds max_age,
+                                        bool httponly) {
+  std::string cookie_value;
+  // Best effort attempt to avoid numerous string copies.
+  cookie_value.reserve(value.size() + path.size() + 30);
+
+  cookie_value = absl::StrCat(key, "=\"", value, "\"");
+  if (max_age != std::chrono::seconds::zero()) {
+    absl::StrAppend(&cookie_value, "; Max-Age=", max_age.count());
+  }
+  if (!path.empty()) {
+    absl::StrAppend(&cookie_value, "; Path=", path);
+  }
+  if (httponly) {
+    absl::StrAppend(&cookie_value, "; HttpOnly");
+  }
+  return cookie_value;
 }
 
 bool Utility::hasSetCookie(const HeaderMap& headers, const std::string& key) {
@@ -175,15 +201,18 @@ uint64_t Utility::getResponseStatus(const HeaderMap& headers) {
   return response_code;
 }
 
-bool Utility::isWebSocketUpgradeRequest(const HeaderMap& headers) {
+bool Utility::isUpgrade(const HeaderMap& headers) {
   // In firefox the "Connection" request header value is "keep-alive, Upgrade",
   // we should check if it contains the "Upgrade" token.
   return (headers.Connection() && headers.Upgrade() &&
-          headers.Connection()->value().caseInsensitiveContains(
-              Http::Headers::get().ConnectionValues.Upgrade.c_str()) &&
-          (0 == StringUtil::caseInsensitiveCompare(
-                    headers.Upgrade()->value().c_str(),
-                    Http::Headers::get().UpgradeValues.WebSocket.c_str())));
+          Envoy::StringUtil::caseFindToken(headers.Connection()->value().getStringView(), ",",
+                                           Http::Headers::get().ConnectionValues.Upgrade.c_str()));
+}
+
+bool Utility::isWebSocketUpgradeRequest(const HeaderMap& headers) {
+  return (isUpgrade(headers) && (0 == StringUtil::caseInsensitiveCompare(
+                                          headers.Upgrade()->value().c_str(),
+                                          Http::Headers::get().UpgradeValues.WebSocket.c_str())));
 }
 
 Http2Settings
@@ -210,30 +239,48 @@ Utility::parseHttp1Settings(const envoy::api::v2::core::Http1ProtocolOptions& co
   return ret;
 }
 
-void Utility::sendLocalReply(StreamDecoderFilterCallbacks& callbacks, const bool& is_reset,
-                             Code response_code, const std::string& body_text) {
-  sendLocalReply(
-      [&](HeaderMapPtr&& headers, bool end_stream) -> void {
-        callbacks.encodeHeaders(std::move(headers), end_stream);
-      },
-      [&](Buffer::Instance& data, bool end_stream) -> void {
-        callbacks.encodeData(data, end_stream);
-      },
-      is_reset, response_code, body_text);
+void Utility::sendLocalReply(bool is_grpc, StreamDecoderFilterCallbacks& callbacks,
+                             const bool& is_reset, Code response_code,
+                             const std::string& body_text) {
+  sendLocalReply(is_grpc,
+                 [&](HeaderMapPtr&& headers, bool end_stream) -> void {
+                   callbacks.encodeHeaders(std::move(headers), end_stream);
+                 },
+                 [&](Buffer::Instance& data, bool end_stream) -> void {
+                   callbacks.encodeData(data, end_stream);
+                 },
+                 is_reset, response_code, body_text);
 }
 
 void Utility::sendLocalReply(
-    std::function<void(HeaderMapPtr&& headers, bool end_stream)> encode_headers,
+    bool is_grpc, std::function<void(HeaderMapPtr&& headers, bool end_stream)> encode_headers,
     std::function<void(Buffer::Instance& data, bool end_stream)> encode_data, const bool& is_reset,
     Code response_code, const std::string& body_text) {
+  // encode_headers() may reset the stream, so the stream must not be reset before calling it.
+  ASSERT(!is_reset);
+  // Respond with a gRPC trailers-only response if the request is gRPC
+  if (is_grpc) {
+    HeaderMapPtr response_headers{new HeaderMapImpl{
+        {Headers::get().Status, std::to_string(enumToInt(Code::OK))},
+        {Headers::get().ContentType, Headers::get().ContentTypeValues.Grpc},
+        {Headers::get().GrpcStatus,
+         std::to_string(enumToInt(Grpc::Utility::httpToGrpcStatus(enumToInt(response_code))))}}};
+    if (!body_text.empty()) {
+      // TODO: GrpcMessage should be percent-encoded
+      response_headers->insertGrpcMessage().value(body_text);
+    }
+    encode_headers(std::move(response_headers), true); // Trailers only response
+    return;
+  }
+
   HeaderMapPtr response_headers{
       new HeaderMapImpl{{Headers::get().Status, std::to_string(enumToInt(response_code))}}};
   if (!body_text.empty()) {
     response_headers->insertContentLength().value(body_text.size());
     response_headers->insertContentType().value(Headers::get().ContentTypeValues.Text);
   }
-
   encode_headers(std::move(response_headers), body_text.empty());
+  // encode_headers()) may have changed the referenced is_reset so we need to test it
   if (!body_text.empty() && !is_reset) {
     Buffer::OwnedImpl buffer(body_text);
     encode_data(buffer, true);
@@ -248,7 +295,7 @@ Utility::getLastAddressFromXFF(const Http::HeaderMap& request_headers, uint32_t 
   }
 
   absl::string_view xff_string(xff_header->value().c_str(), xff_header->value().size());
-  static const std::string seperator(", ");
+  static const std::string seperator(",");
   // Ignore the last num_to_skip addresses at the end of XFF.
   for (uint32_t i = 0; i < num_to_skip; i++) {
     std::string::size_type last_comma = xff_string.rfind(seperator);
@@ -263,6 +310,10 @@ Utility::getLastAddressFromXFF(const Http::HeaderMap& request_headers, uint32_t 
   if (last_comma != std::string::npos && last_comma + seperator.size() < xff_string.size()) {
     xff_string = xff_string.substr(last_comma + seperator.size());
   }
+
+  // Ignore the whitespace, since they are allowed in HTTP lists (see RFC7239#section-7.1).
+  xff_string = StringUtil::ltrim(xff_string);
+  xff_string = StringUtil::rtrim(xff_string);
 
   try {
     // This technically requires a copy because inet_pton takes a null terminated string. In
@@ -287,17 +338,58 @@ const std::string& Utility::getProtocolString(const Protocol protocol) {
     return Headers::get().ProtocolStrings.Http2String;
   }
 
-  NOT_REACHED;
+  NOT_REACHED_GCOVR_EXCL_LINE;
 }
 
-void Utility::appendToHeader(HeaderString& header, const std::string& data) {
-  if (data.empty()) {
-    return;
+void Utility::extractHostPathFromUri(const absl::string_view& uri, absl::string_view& host,
+                                     absl::string_view& path) {
+  /**
+   *  URI RFC: https://www.ietf.org/rfc/rfc2396.txt
+   *
+   *  Example:
+   *  uri  = "https://example.com:8443/certs"
+   *  pos:         ^
+   *  host_pos:       ^
+   *  path_pos:                       ^
+   *  host = "example.com:8443"
+   *  path = "/certs"
+   */
+  const auto pos = uri.find("://");
+  // Start position of the host
+  const auto host_pos = (pos == std::string::npos) ? 0 : pos + 3;
+  // Start position of the path
+  const auto path_pos = uri.find("/", host_pos);
+  if (path_pos == std::string::npos) {
+    // If uri doesn't have "/", the whole string is treated as host.
+    host = uri.substr(host_pos);
+    path = "/";
+  } else {
+    host = uri.substr(host_pos, path_pos - host_pos);
+    path = uri.substr(path_pos);
   }
-  if (!header.empty()) {
-    header.append(",", 1);
+}
+
+MessagePtr Utility::prepareHeaders(const ::envoy::api::v2::core::HttpUri& http_uri) {
+  absl::string_view host, path;
+  extractHostPathFromUri(http_uri.uri(), host, path);
+
+  MessagePtr message(new RequestMessageImpl());
+  message->headers().insertPath().value(path.data(), path.size());
+  message->headers().insertHost().value(host.data(), host.size());
+
+  return message;
+}
+
+// TODO(jmarantz): make QueryParams a real class and put this serializer there,
+// along with proper URL escaping of the name and value.
+std::string Utility::queryParamsToString(const QueryParams& params) {
+  std::string out;
+  std::string delim = "?";
+  for (auto p : params) {
+    absl::StrAppend(&out, delim, p.first, "=", p.second);
+    delim = "&";
   }
-  header.append(data.c_str(), data.size());
+  return out;
 }
 
 } // namespace Http

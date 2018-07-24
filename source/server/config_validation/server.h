@@ -11,6 +11,7 @@
 #include "common/common/assert.h"
 #include "common/router/rds_impl.h"
 #include "common/runtime/runtime_impl.h"
+#include "common/secret/secret_manager_impl.h"
 #include "common/ssl/context_manager_impl.h"
 #include "common/stats/stats_impl.h"
 #include "common/thread_local/thread_local_impl.h"
@@ -62,15 +63,18 @@ public:
   Upstream::ClusterManager& clusterManager() override { return *config_->clusterManager(); }
   Ssl::ContextManager& sslContextManager() override { return *ssl_context_manager_; }
   Event::Dispatcher& dispatcher() override { return *dispatcher_; }
-  Network::DnsResolverSharedPtr dnsResolver() override { return dns_resolver_; }
-  void drainListeners() override { NOT_IMPLEMENTED; }
-  DrainManager& drainManager() override { NOT_IMPLEMENTED; }
+  Network::DnsResolverSharedPtr dnsResolver() override {
+    return dispatcher().createDnsResolver({});
+  }
+  void drainListeners() override { NOT_IMPLEMENTED_GCOVR_EXCL_LINE; }
+  DrainManager& drainManager() override { NOT_IMPLEMENTED_GCOVR_EXCL_LINE; }
   AccessLog::AccessLogManager& accessLogManager() override { return access_log_manager_; }
-  void failHealthcheck(bool) override { NOT_IMPLEMENTED; }
-  void getParentStats(HotRestart::GetParentStatsInfo&) override { NOT_IMPLEMENTED; }
-  HotRestart& hotRestart() override { NOT_IMPLEMENTED; }
+  void failHealthcheck(bool) override { NOT_IMPLEMENTED_GCOVR_EXCL_LINE; }
+  void getParentStats(HotRestart::GetParentStatsInfo&) override { NOT_IMPLEMENTED_GCOVR_EXCL_LINE; }
+  HotRestart& hotRestart() override { NOT_IMPLEMENTED_GCOVR_EXCL_LINE; }
   Init::Manager& initManager() override { return init_manager_; }
   ListenerManager& listenerManager() override { return listener_manager_; }
+  Secret::SecretManager& secretManager() override { return *secret_manager_; }
   Runtime::RandomGenerator& random() override { return random_generator_; }
   RateLimit::ClientPtr
   rateLimitClient(const absl::optional<std::chrono::milliseconds>& timeout) override {
@@ -78,18 +82,26 @@ public:
   }
   Runtime::Loader& runtime() override { return *runtime_loader_; }
   void shutdown() override;
-  void shutdownAdmin() override { NOT_IMPLEMENTED; }
+  void shutdownAdmin() override { NOT_IMPLEMENTED_GCOVR_EXCL_LINE; }
   Singleton::Manager& singletonManager() override { return *singleton_manager_; }
-  bool healthCheckFailed() override { NOT_IMPLEMENTED; }
+  bool healthCheckFailed() override { NOT_IMPLEMENTED_GCOVR_EXCL_LINE; }
   Options& options() override { return options_; }
-  time_t startTimeCurrentEpoch() override { NOT_IMPLEMENTED; }
-  time_t startTimeFirstEpoch() override { NOT_IMPLEMENTED; }
+  time_t startTimeCurrentEpoch() override { NOT_IMPLEMENTED_GCOVR_EXCL_LINE; }
+  time_t startTimeFirstEpoch() override { NOT_IMPLEMENTED_GCOVR_EXCL_LINE; }
   Stats::Store& stats() override { return stats_store_; }
   Tracing::HttpTracer& httpTracer() override { return config_->httpTracer(); }
   ThreadLocal::Instance& threadLocal() override { return thread_local_; }
   const LocalInfo::LocalInfo& localInfo() override { return *local_info_; }
 
+  std::chrono::milliseconds statsFlushInterval() const override {
+    return config_->statsFlushInterval();
+  }
+
   // Server::ListenerComponentFactory
+  LdsApiPtr createLdsApi(const envoy::api::v2::core::ConfigSource& lds_config) override {
+    return std::make_unique<LdsApiImpl>(lds_config, clusterManager(), dispatcher(), random(),
+                                        initManager(), localInfo(), stats(), listenerManager());
+  }
   std::vector<Network::FilterFactoryCb> createNetworkFilterFactoryList(
       const Protobuf::RepeatedPtrField<envoy::api::v2::listener::Filter>& filters,
       Configuration::FactoryContext& context) override {
@@ -134,12 +146,12 @@ private:
   Runtime::RandomGeneratorImpl random_generator_;
   std::unique_ptr<Ssl::ContextManagerImpl> ssl_context_manager_;
   std::unique_ptr<Configuration::Main> config_;
-  std::shared_ptr<Network::ValidationDnsResolver> dns_resolver_{new Network::ValidationDnsResolver};
   LocalInfo::LocalInfoPtr local_info_;
   AccessLog::AccessLogManagerImpl access_log_manager_;
   std::unique_ptr<Upstream::ValidationClusterManagerFactory> cluster_manager_factory_;
   InitManagerImpl init_manager_;
   ListenerManagerImpl listener_manager_;
+  std::unique_ptr<Secret::SecretManager> secret_manager_;
 };
 
 } // namespace Server

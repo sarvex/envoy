@@ -54,6 +54,7 @@ namespace Http {
   COUNTER  (downstream_rq_4xx)                                                                     \
   COUNTER  (downstream_rq_5xx)                                                                     \
   HISTOGRAM(downstream_rq_time)                                                                    \
+  COUNTER  (downstream_rq_idle_timeout)                                                            \
   COUNTER  (rs_too_large)
 // clang-format on
 
@@ -97,6 +98,9 @@ struct ConnectionManagerTracingStats {
 struct TracingConnectionManagerConfig {
   Tracing::OperationName operation_name_;
   std::vector<Http::LowerCaseString> request_headers_for_tags_;
+  uint64_t client_sampling_;
+  uint64_t random_sampling_;
+  uint64_t overall_sampling_;
 };
 
 typedef std::unique_ptr<TracingConnectionManagerConfig> TracingConnectionManagerConfigPtr;
@@ -135,7 +139,7 @@ enum class ForwardClientCertType {
  * Configuration for the fields of the client cert, used for populating the current client cert
  * information to the next hop.
  */
-enum class ClientCertDetailsType { Cert, Subject, SAN, URI, DNS };
+enum class ClientCertDetailsType { Cert, Subject, URI, DNS };
 
 /**
  * Abstract configuration for the connection manager.
@@ -188,7 +192,13 @@ public:
   /**
    * @return optional idle timeout for incoming connection manager connections.
    */
-  virtual const absl::optional<std::chrono::milliseconds>& idleTimeout() PURE;
+  virtual absl::optional<std::chrono::milliseconds> idleTimeout() const PURE;
+
+  /**
+   * @return per-stream idle timeout for incoming connection manager connections. Zero indicates a
+   *         disabled idle timeout.
+   */
+  virtual std::chrono::milliseconds streamIdleTimeout() const PURE;
 
   /**
    * @return Router::RouteConfigProvider& the configuration provider used to acquire a route
@@ -222,6 +232,19 @@ public:
    *         the purposes of XFF processing.
    */
   virtual uint32_t xffNumTrustedHops() const PURE;
+
+  /**
+   * @return bool don't append the remote address to XFF? This overrides the behavior of
+   *              useRemoteAddress() and may be used when XFF should not be modified but we still
+   *              want to avoid trusting incoming XFF in remote IP determination.
+   */
+  virtual bool skipXffAppend() const PURE;
+
+  /**
+   * @return const absl::optional<std::string>& value of via header to add to requests and response
+   *                                            headers if set.
+   */
+  virtual const std::string& via() const PURE;
 
   /**
    * @return ForwardClientCertType the configuration of how to forward the client cert information.

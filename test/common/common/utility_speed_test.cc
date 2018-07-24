@@ -43,6 +43,38 @@ static void BM_AccessLogDateTimeFormatter(benchmark::State& state) {
 }
 BENCHMARK(BM_AccessLogDateTimeFormatter);
 
+// This benchmark is basically similar with the above BM_AccessLogDateTimeFormatter, the only
+// difference is the format string input for the Envoy::DateFormatter.
+static void BM_DateTimeFormatterWithSubseconds(benchmark::State& state) {
+  int outputBytes = 0;
+
+  Envoy::SystemTime time(std::chrono::seconds(1522796769));
+  std::mt19937 prng(1);
+  std::uniform_int_distribution<long> distribution(-10, 20);
+  Envoy::DateFormatter date_formatter("%Y-%m-%dT%H:%M:%s.%3f");
+  for (auto _ : state) {
+    time += std::chrono::milliseconds(static_cast<int>(distribution(prng)));
+    outputBytes += date_formatter.fromTime(time).length();
+  }
+  benchmark::DoNotOptimize(outputBytes);
+}
+BENCHMARK(BM_DateTimeFormatterWithSubseconds);
+
+static void BM_DateTimeFormatterWithoutSubseconds(benchmark::State& state) {
+  int outputBytes = 0;
+
+  Envoy::SystemTime time(std::chrono::seconds(1522796769));
+  std::mt19937 prng(1);
+  std::uniform_int_distribution<long> distribution(-10, 20);
+  Envoy::DateFormatter date_formatter("%Y-%m-%dT%H:%M:%s");
+  for (auto _ : state) {
+    time += std::chrono::milliseconds(static_cast<int>(distribution(prng)));
+    outputBytes += date_formatter.fromTime(time).length();
+  }
+  benchmark::DoNotOptimize(outputBytes);
+}
+BENCHMARK(BM_DateTimeFormatterWithoutSubseconds);
+
 static void BM_RTrimStringView(benchmark::State& state) {
   int accum = 0;
   for (auto _ : state) {
@@ -79,7 +111,7 @@ BENCHMARK(BM_RTrimStringViewAlreadyTrimmedAndMakeString);
 static void BM_FindToken(benchmark::State& state) {
   const absl::string_view cache_control(CacheControl, CacheControlLength);
   for (auto _ : state) {
-    RELEASE_ASSERT(Envoy::StringUtil::findToken(cache_control, ",", "no-transform"));
+    RELEASE_ASSERT(Envoy::StringUtil::findToken(cache_control, ",", "no-transform"), "");
   }
 }
 BENCHMARK(BM_FindToken);
@@ -121,7 +153,7 @@ static bool findTokenWithoutSplitting(absl::string_view str, char delim, absl::s
 static void BM_FindTokenWithoutSplitting(benchmark::State& state) {
   const absl::string_view cache_control(CacheControl, CacheControlLength);
   for (auto _ : state) {
-    RELEASE_ASSERT(findTokenWithoutSplitting(cache_control, ',', "no-transform", true));
+    RELEASE_ASSERT(findTokenWithoutSplitting(cache_control, ',', "no-transform", true), "");
   }
 }
 BENCHMARK(BM_FindTokenWithoutSplitting);
@@ -136,7 +168,7 @@ static void BM_FindTokenValueNestedSplit(benchmark::State& state) {
         max_age = Envoy::StringUtil::trim(name_value[1]);
       }
     }
-    RELEASE_ASSERT(max_age == "300");
+    RELEASE_ASSERT(max_age == "300", "");
   }
 }
 BENCHMARK(BM_FindTokenValueNestedSplit);
@@ -152,7 +184,7 @@ static void BM_FindTokenValueSearchForEqual(benchmark::State& state) {
         max_age = Envoy::StringUtil::trim(token.substr(equals + 1));
       }
     }
-    RELEASE_ASSERT(max_age == "300");
+    RELEASE_ASSERT(max_age == "300", "");
   }
 }
 BENCHMARK(BM_FindTokenValueSearchForEqual);
@@ -167,7 +199,7 @@ static void BM_FindTokenValueNoSplit(benchmark::State& state) {
         max_age = Envoy::StringUtil::trim(token);
       }
     }
-    RELEASE_ASSERT(max_age == "300");
+    RELEASE_ASSERT(max_age == "300", "");
   }
 }
 BENCHMARK(BM_FindTokenValueNoSplit);

@@ -21,15 +21,20 @@ public:
   SystemTime startTime() const override { return start_time_; }
   MonotonicTime startTimeMonotonic() const override { return start_time_monotonic_; }
 
+  void addBytesReceived(uint64_t) override { NOT_IMPLEMENTED_GCOVR_EXCL_LINE; }
   uint64_t bytesReceived() const override { return 1; }
   absl::optional<Http::Protocol> protocol() const override { return protocol_; }
   void protocol(Http::Protocol protocol) override { protocol_ = protocol; }
   absl::optional<uint32_t> responseCode() const override { return response_code_; }
+  void addBytesSent(uint64_t) override { NOT_IMPLEMENTED_GCOVR_EXCL_LINE; }
   uint64_t bytesSent() const override { return 2; }
-
-  bool getResponseFlag(Envoy::RequestInfo::ResponseFlag response_flag) const override {
+  bool intersectResponseFlags(uint64_t response_flags) const override {
+    return (response_flags_ & response_flags) != 0;
+  }
+  bool hasResponseFlag(Envoy::RequestInfo::ResponseFlag response_flag) const override {
     return response_flags_ & response_flag;
   }
+  bool hasAnyResponseFlag() const override { return response_flags_ != 0; }
   void setResponseFlag(Envoy::RequestInfo::ResponseFlag response_flag) override {
     response_flags_ |= response_flag;
   }
@@ -37,13 +42,26 @@ public:
     upstream_host_ = host;
   }
   Upstream::HostDescriptionConstSharedPtr upstreamHost() const override { return upstream_host_; }
+  void setUpstreamLocalAddress(
+      const Network::Address::InstanceConstSharedPtr& upstream_local_address) override {
+    upstream_local_address_ = upstream_local_address;
+  }
   const Network::Address::InstanceConstSharedPtr& upstreamLocalAddress() const override {
     return upstream_local_address_;
   }
   bool healthCheck() const override { return hc_request_; }
   void healthCheck(bool is_hc) override { hc_request_ = is_hc; }
+
+  void setDownstreamLocalAddress(
+      const Network::Address::InstanceConstSharedPtr& downstream_local_address) override {
+    downstream_local_address_ = downstream_local_address;
+  }
   const Network::Address::InstanceConstSharedPtr& downstreamLocalAddress() const override {
     return downstream_local_address_;
+  }
+  void setDownstreamRemoteAddress(
+      const Network::Address::InstanceConstSharedPtr& downstream_remote_address) override {
+    downstream_remote_address_ = downstream_remote_address;
   }
   const Network::Address::InstanceConstSharedPtr& downstreamRemoteAddress() const override {
     return downstream_remote_address_;

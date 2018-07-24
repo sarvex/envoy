@@ -7,6 +7,7 @@
 #include "common/stats/thread_local_store.h"
 
 #include "test/mocks/event/mocks.h"
+#include "test/mocks/server/mocks.h"
 #include "test/mocks/stats/mocks.h"
 #include "test/mocks/thread_local/mocks.h"
 #include "test/test_common/utility.h"
@@ -37,7 +38,7 @@ public:
     }));
 
     EXPECT_CALL(*this, alloc("stats.overflow"));
-    store_.reset(new ThreadLocalStoreImpl(*this));
+    store_ = std::make_unique<ThreadLocalStoreImpl>(options_, *this);
     store_->addSink(sink_);
   }
 
@@ -46,6 +47,7 @@ public:
 
   NiceMock<Event::MockDispatcher> main_thread_dispatcher_;
   NiceMock<ThreadLocal::MockInstance> tls_;
+  Stats::StatsOptionsImpl options_;
   TestAllocator alloc_;
   MockSink sink_;
   std::unique_ptr<ThreadLocalStoreImpl> store_;
@@ -65,7 +67,7 @@ public:
     }));
 
     EXPECT_CALL(*this, alloc("stats.overflow"));
-    store_.reset(new ThreadLocalStoreImpl(*this));
+    store_ = std::make_unique<ThreadLocalStoreImpl>(options_, *this);
     store_->addSink(sink_);
     store_->initializeThreading(main_thread_dispatcher_, tls_);
   }
@@ -77,7 +79,7 @@ public:
     EXPECT_CALL(*this, free(_));
   }
 
-  NameHistogramMap makeHistogramMap(const std::list<ParentHistogramSharedPtr>& hist_list) {
+  NameHistogramMap makeHistogramMap(const std::vector<ParentHistogramSharedPtr>& hist_list) {
     NameHistogramMap name_histogram_map;
     for (const Stats::ParentHistogramSharedPtr& histogram : hist_list) {
       // Exclude the scope part of the name.
@@ -97,7 +99,7 @@ public:
 
     EXPECT_TRUE(merge_called);
 
-    std::list<ParentHistogramSharedPtr> histogram_list = store_->histograms();
+    std::vector<ParentHistogramSharedPtr> histogram_list = store_->histograms();
 
     histogram_t* hist1_cumulative = makeHistogram(h1_cumulative_values_);
     histogram_t* hist2_cumulative = makeHistogram(h2_cumulative_values_);
@@ -157,6 +159,7 @@ public:
 
   NiceMock<Event::MockDispatcher> main_thread_dispatcher_;
   NiceMock<ThreadLocal::MockInstance> tls_;
+  Stats::StatsOptionsImpl options_;
   TestAllocator alloc_;
   MockSink sink_;
   std::unique_ptr<ThreadLocalStoreImpl> store_;
@@ -266,6 +269,23 @@ TEST_F(StatsThreadLocalStoreTest, BasicScope) {
   EXPECT_CALL(*this, free(_)).Times(5);
 }
 
+// Validate that we sanitize away bad characters in the stats prefix.
+TEST_F(StatsThreadLocalStoreTest, SanitizePrefix) {
+  InSequence s;
+  store_->initializeThreading(main_thread_dispatcher_, tls_);
+
+  ScopePtr scope1 = store_->createScope(std::string("scope1:\0:foo.", 13));
+  EXPECT_CALL(*this, alloc(_));
+  Counter& c1 = scope1->counter("c1");
+  EXPECT_EQ("scope1___foo.c1", c1.name());
+
+  store_->shutdownThreading();
+  tls_.shutdownThread();
+
+  // Includes overflow stat.
+  EXPECT_CALL(*this, free(_)).Times(2);
+}
+
 TEST_F(StatsThreadLocalStoreTest, ScopeDelete) {
   InSequence s;
   store_->initializeThreading(main_thread_dispatcher_, tls_);
@@ -276,11 +296,15 @@ TEST_F(StatsThreadLocalStoreTest, ScopeDelete) {
   EXPECT_EQ(2UL, store_->counters().size());
   CounterSharedPtr c1 = store_->counters().front();
   EXPECT_EQ("scope1.c1", c1->name());
+  EXPECT_EQ(store_->source().cachedCounters().front(), c1);
 
   EXPECT_CALL(main_thread_dispatcher_, post(_));
   EXPECT_CALL(tls_, runOnAllThreads(_));
   scope1.reset();
   EXPECT_EQ(1UL, store_->counters().size());
+  EXPECT_EQ(2UL, store_->source().cachedCounters().size());
+  store_->source().clearCache();
+  EXPECT_EQ(1UL, store_->source().cachedCounters().size());
 
   EXPECT_CALL(*this, free(_));
   EXPECT_EQ(1L, c1.use_count());
@@ -572,11 +596,19 @@ TEST_F(HistogramTest, BasicHistogramUsed) {
   h1.recordValue(1);
 
   NameHistogramMap name_histogram_map = makeHistogramMap(store_->histograms());
-  EXPECT_TRUE(name_histogram_map["h1"]->used());
+  EXPECT_FALSE(name_histogram_map["h1"]->used());
   EXPECT_FALSE(name_histogram_map["h2"]->used());
+
+  // Merge the histograms and validate that h1 is considered used.
+  store_->mergeHistograms([]() -> void {});
+  EXPECT_TRUE(name_histogram_map["h1"]->used());
 
   EXPECT_CALL(sink_, onHistogramComplete(Ref(h2), 2));
   h2.recordValue(2);
+  EXPECT_FALSE(name_histogram_map["h2"]->used());
+
+  // Merge histograms again and validate that both h1 and h2 are used.
+  store_->mergeHistograms([]() -> void {});
 
   for (const Stats::ParentHistogramSharedPtr& histogram : store_->histograms()) {
     EXPECT_TRUE(histogram->used());

@@ -65,7 +65,7 @@ typeToCodecType(Http::CodecClient::Type type) {
     return envoy::config::filter::network::http_connection_manager::v2::HttpConnectionManager::
         HTTP2;
   default:
-    RELEASE_ASSERT(0);
+    RELEASE_ASSERT(0, "");
   }
 }
 
@@ -182,6 +182,7 @@ HttpIntegrationTest::HttpIntegrationTest(Http::CodecClient::Type downstream_prot
 HttpIntegrationTest::~HttpIntegrationTest() {
   cleanupUpstreamAndDownstream();
   test_server_.reset();
+  fake_upstream_connection_.reset();
   fake_upstreams_.clear();
 }
 
@@ -191,8 +192,9 @@ void HttpIntegrationTest::setDownstreamProtocol(Http::CodecClient::Type downstre
 }
 
 IntegrationStreamDecoderPtr HttpIntegrationTest::sendRequestAndWaitForResponse(
-    Http::TestHeaderMapImpl& request_headers, uint32_t request_body_size,
-    Http::TestHeaderMapImpl& response_headers, uint32_t response_size) {
+    const Http::TestHeaderMapImpl& request_headers, uint32_t request_body_size,
+    const Http::TestHeaderMapImpl& response_headers, uint32_t response_size) {
+  ASSERT(codec_client_ != nullptr);
   // Send the request to Envoy.
   IntegrationStreamDecoderPtr response;
   if (request_body_size) {
@@ -213,12 +215,16 @@ IntegrationStreamDecoderPtr HttpIntegrationTest::sendRequestAndWaitForResponse(
 }
 
 void HttpIntegrationTest::cleanupUpstreamAndDownstream() {
-  if (codec_client_) {
-    codec_client_->close();
-  }
+  // Close the upstream connection first. If there's an outstanding request,
+  // closing the client may result in a FIN being sent upstream, and FakeConnectionBase::close
+  // will interpret that as an unexpected disconnect. The codec client is not
+  // subject to the same failure mode.
   if (fake_upstream_connection_) {
     fake_upstream_connection_->close();
     fake_upstream_connection_->waitForDisconnect();
+  }
+  if (codec_client_) {
+    codec_client_->close();
   }
 }
 
@@ -630,6 +636,21 @@ void HttpIntegrationTest::testRetry() {
   EXPECT_EQ(512U, response->body().size());
 }
 
+// Change the default route to be restrictive, and send a request to an alternate route.
+void HttpIntegrationTest::testGrpcRouterNotFound() {
+  config_helper_.setDefaultHostAndRoute("foo.com", "/found");
+  initialize();
+
+  BufferingStreamDecoderPtr response = IntegrationUtil::makeSingleRequest(
+      lookupPort("http"), "POST", "/service/notfound", "", downstream_protocol_, version_, "host",
+      Http::Headers::get().ContentTypeValues.Grpc);
+  ASSERT_TRUE(response->complete());
+  EXPECT_STREQ("200", response->headers().Status()->value().c_str());
+  EXPECT_EQ(Http::Headers::get().ContentTypeValues.Grpc,
+            response->headers().ContentType()->value().c_str());
+  EXPECT_STREQ("12", response->headers().GrpcStatus()->value().c_str());
+}
+
 void HttpIntegrationTest::testGrpcRetry() {
   Http::TestHeaderMapImpl response_trailers{{"response1", "trailer1"}, {"grpc-status", "0"}};
   initialize();
@@ -723,8 +744,16 @@ void HttpIntegrationTest::testHittingDecoderFilterLimit() {
                                          1024 * 65);
 
   response->waitForEndStream();
-  ASSERT_TRUE(response->complete());
-  EXPECT_STREQ("413", response->headers().Status()->value().c_str());
+  // With HTTP/1 there's a possible race where if the connection backs up early,
+  // the 413-and-connection-close may be sent while the body is still being
+  // sent, resulting in a write error and the connection being closed before the
+  // response is read.
+  if (downstream_protocol_ == Http::CodecClient::Type::HTTP2) {
+    ASSERT_TRUE(response->complete());
+  }
+  if (response->complete()) {
+    EXPECT_STREQ("413", response->headers().Status()->value().c_str());
+  }
 }
 
 // Test hitting the dynamo filter with too many response bytes to buffer. Given the request headers
@@ -747,15 +776,19 @@ void HttpIntegrationTest::testHittingEncoderFilterLimit() {
   // Send the respone headers.
   upstream_request_->encodeHeaders(Http::TestHeaderMapImpl{{":status", "200"}}, false);
 
-  // Now send an overly large response body.
+  // Now send an overly large response body. At some point, too much data will
+  // be buffered, the stream will be reset, and the connection will disconnect.
+  fake_upstreams_[0]->set_allow_unexpected_disconnects(true);
   upstream_request_->encodeData(1024 * 65, false);
+  fake_upstream_connection_->waitForDisconnect();
 
   response->waitForEndStream();
   EXPECT_TRUE(response->complete());
   EXPECT_STREQ("500", response->headers().Status()->value().c_str());
 }
 
-void HttpIntegrationTest::testEnvoyHandling100Continue(bool additional_continue_from_upstream) {
+void HttpIntegrationTest::testEnvoyHandling100Continue(bool additional_continue_from_upstream,
+                                                       const std::string& via) {
   initialize();
   codec_client_ = makeHttpConnection(lookupPort("http"));
 
@@ -776,7 +809,13 @@ void HttpIntegrationTest::testEnvoyHandling100Continue(bool additional_continue_
   codec_client_->sendData(*request_encoder_, 10, true);
   upstream_request_->waitForEndStream(*dispatcher_);
   // Verify the Expect header is stripped.
-  EXPECT_TRUE(upstream_request_->headers().get(Http::Headers::get().Expect) == nullptr);
+  EXPECT_EQ(nullptr, upstream_request_->headers().get(Http::Headers::get().Expect));
+  if (via.empty()) {
+    EXPECT_EQ(nullptr, upstream_request_->headers().get(Http::Headers::get().Via));
+  } else {
+    EXPECT_STREQ(via.c_str(),
+                 upstream_request_->headers().get(Http::Headers::get().Via)->value().c_str());
+  }
 
   if (additional_continue_from_upstream) {
     // Make sure if upstream sends an 100-Continue Envoy doesn't send its own and proxy the one
@@ -790,7 +829,13 @@ void HttpIntegrationTest::testEnvoyHandling100Continue(bool additional_continue_
   ASSERT_TRUE(response->complete());
   ASSERT(response->continue_headers() != nullptr);
   EXPECT_STREQ("100", response->continue_headers()->Status()->value().c_str());
+  EXPECT_EQ(nullptr, response->continue_headers()->Via());
   EXPECT_STREQ("200", response->headers().Status()->value().c_str());
+  if (via.empty()) {
+    EXPECT_EQ(nullptr, response->headers().Via());
+  } else {
+    EXPECT_STREQ(via.c_str(), response->headers().Via()->value().c_str());
+  }
 }
 
 void HttpIntegrationTest::testEnvoyProxying100Continue(bool continue_before_upstream_complete,
@@ -1091,6 +1136,11 @@ void HttpIntegrationTest::testHttp10Enabled() {
       reinterpret_cast<AutonomousUpstream*>(fake_upstreams_.front().get())->lastRequestHeaders();
   ASSERT_TRUE(upstream_headers.get() != nullptr);
   EXPECT_EQ(upstream_headers->Host()->value(), "default.com");
+
+  sendRawHttpAndWaitForResponse(lookupPort("http"), "HEAD / HTTP/1.0\r\n\r\n", &response, false);
+  EXPECT_THAT(response, HasSubstr("HTTP/1.0 200 OK\r\n"));
+  EXPECT_THAT(response, HasSubstr("connection: close"));
+  EXPECT_THAT(response, Not(HasSubstr("transfer-encoding: chunked\r\n")));
 }
 
 // Verify for HTTP/1.0 a keep-alive header results in no connection: close.
@@ -1186,6 +1236,32 @@ void HttpIntegrationTest::testAllowAbsoluteSameRelative() {
 void HttpIntegrationTest::testConnect() {
   // Ensure that connect behaves the same with allow_absolute_url enabled and without
   testEquivalent("CONNECT www.somewhere.com:80 HTTP/1.1\r\nHost: host\r\n\r\n");
+}
+
+void HttpIntegrationTest::testInlineHeaders() {
+  autonomous_upstream_ = true;
+  config_helper_.addConfigModifier(&setAllowHttp10WithDefaultHost);
+  initialize();
+  std::string response;
+  sendRawHttpAndWaitForResponse(lookupPort("http"),
+                                "GET / HTTP/1.1\r\n"
+                                "Host: foo.com\r\n"
+                                "Foo: bar\r\n"
+                                "Cache-control: public\r\n"
+                                "Cache-control: 123\r\n"
+                                "Eep: baz\r\n\r\n",
+                                &response, true);
+  EXPECT_THAT(response, HasSubstr("HTTP/1.1 200 OK\r\n"));
+
+  std::unique_ptr<Http::TestHeaderMapImpl> upstream_headers =
+      reinterpret_cast<AutonomousUpstream*>(fake_upstreams_.front().get())->lastRequestHeaders();
+  ASSERT_TRUE(upstream_headers.get() != nullptr);
+  EXPECT_EQ(upstream_headers->Host()->value(), "foo.com");
+  EXPECT_EQ(upstream_headers->CacheControl()->value(), "public,123");
+  ASSERT_TRUE(upstream_headers->get(Envoy::Http::LowerCaseString("foo")) != nullptr);
+  EXPECT_STREQ("bar", upstream_headers->get(Envoy::Http::LowerCaseString("foo"))->value().c_str());
+  ASSERT_TRUE(upstream_headers->get(Envoy::Http::LowerCaseString("eep")) != nullptr);
+  EXPECT_STREQ("baz", upstream_headers->get(Envoy::Http::LowerCaseString("eep"))->value().c_str());
 }
 
 void HttpIntegrationTest::testEquivalent(const std::string& request) {
@@ -1384,7 +1460,6 @@ void HttpIntegrationTest::testDownstreamResetBeforeResponseComplete() {
 }
 
 void HttpIntegrationTest::testTrailers(uint64_t request_size, uint64_t response_size) {
-  config_helper_.addFilter(ConfigHelper::DEFAULT_BUFFER_FILTER);
   Http::TestHeaderMapImpl request_trailers{{"request1", "trailer1"}, {"request2", "trailer2"}};
   Http::TestHeaderMapImpl response_trailers{{"response1", "trailer1"}, {"response2", "trailer2"}};
 

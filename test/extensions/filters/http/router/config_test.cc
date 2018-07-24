@@ -1,3 +1,4 @@
+#include "envoy/config/filter/http/router/v2/router.pb.validate.h"
 #include "envoy/registry/registry.h"
 
 #include "extensions/filters/http/router/config.h"
@@ -72,7 +73,7 @@ TEST(RouterFilterConfigTest, DoubleRegistrationTest) {
       (Registry::RegisterFactory<RouterFilterConfig,
                                  Server::Configuration::NamedHttpFilterConfigFactory>()),
       EnvoyException,
-      fmt::format("Double registration for name: '{}'", HttpFilterNames::get().ROUTER));
+      fmt::format("Double registration for name: '{}'", HttpFilterNames::get().Router));
 }
 
 } // namespace RouterFilter

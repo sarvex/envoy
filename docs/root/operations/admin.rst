@@ -110,14 +110,22 @@ modify different aspects of the server:
 
     */failed_outlier_check*: The host has failed an outlier detection check.
 
+.. http:get:: /clusters?format=json
+  
+  Dump the */clusters* output in a JSON-serialized proto. See the
+  :ref:`definition <envoy_api_msg_admin.v2alpha.Clusters>` for more information.
+
 .. _operations_admin_interface_config_dump:
 
 .. http:get:: /config_dump
 
   Dump currently loaded configuration from various Envoy components as JSON-serialized proto
-  messages. Currently, only route configs are available but more are on the way. See
-  :api:`envoy/admin/v2/config_dump.proto` for more information. That proto is in draft state and is
-  subject to change.
+  messages. See the :ref:`response definition <envoy_api_msg_admin.v2alpha.ConfigDump>` for more
+  information.
+
+.. warning::
+  The underlying proto is marked v2alpha and hence its contents, including the JSON representation,
+  are not guaranteed to be stable.
 
 .. http:post:: /cpuprofiler
 
@@ -182,62 +190,73 @@ The fields are:
 .. http:get:: /stats
 
   Outputs all statistics on demand. This command is very useful for local debugging.
-  Histograms will output the computed quantiles i.e P0,P25,P50,P75,P90,P99,P99.9 and P100. 
-  The output for each quantile will be in the form of (interval,cumulative) where interval value 
-  represents the summary since last flush interval and cumulative value represents the 
-  summary since the start of envoy instance.
+  Histograms will output the computed quantiles i.e P0,P25,P50,P75,P90,P99,P99.9 and P100.
+  The output for each quantile will be in the form of (interval,cumulative) where interval value
+  represents the summary since last flush interval and cumulative value represents the
+  summary since the start of envoy instance. "No recorded values" in the histogram output indicates
+  that it has not been updated with a value.
   See :ref:`here <operations_stats>` for more information.
 
-  .. http:get:: /stats?format=json
+  .. http:get:: /stats?usedonly
+
+  Outputs statistics that Envoy has updated (counters incremented at least once, gauges changed at
+  least once, and histograms added to at least once).
+
+.. http:get:: /stats?format=json
 
   Outputs /stats in JSON format. This can be used for programmatic access of stats. Counters and Gauges
   will be in the form of a set of (name,value) pairs. Histograms will be under the element "histograms",
   that contains "supported_quantiles" which lists the quantiles supported and an array of computed_quantiles
-  that has the computed quantile for each histogram. Only histograms with recorded values will be exported.
+  that has the computed quantile for each histogram.
 
   If a histogram is not updated during an interval, the ouput will have null for all the quantiles.
   
   Example histogram output:
 
-.. code-block:: json
+  .. code-block:: json
 
-  {
-    "histograms": {
-      "supported_quantiles": [
-        0, 25, 50, 75, 90, 95, 99, 99.9, 100
-      ],
-      "computed_quantiles": [
-        {
-          "name": "cluster.external_auth_cluster.upstream_cx_length_ms",
-          "values": [
-            {"interval": 0, "cumulative": 0},
-            {"interval": 0, "cumulative": 0},
-            {"interval": 1.0435787, "cumulative": 1.0435787},
-            {"interval": 1.0941565, "cumulative": 1.0941565},
-            {"interval": 2.0860023, "cumulative": 2.0860023},
-            {"interval": 3.0665233, "cumulative": 3.0665233},
-            {"interval": 6.046609, "cumulative": 6.046609},
-            {"interval": 229.57333,"cumulative": 229.57333},
-            {"interval": 260,"cumulative": 260}
-          ]
-        },
-        {
-          "name": "http.admin.downstream_rq_time",
-          "values": [
-            {"interval": null, "cumulative": 0},
-            {"interval": null, "cumulative": 0},
-            {"interval": null, "cumulative": 1.0435787},
-            {"interval": null, "cumulative": 1.0941565},
-            {"interval": null, "cumulative": 2.0860023},
-            {"interval": null, "cumulative": 3.0665233},
-            {"interval": null, "cumulative": 6.046609},
-            {"interval": null, "cumulative": 229.57333},
-            {"interval": null, "cumulative": 260}
-          ]
-        }
-      ]
+    {
+      "histograms": {
+        "supported_quantiles": [
+          0, 25, 50, 75, 90, 95, 99, 99.9, 100
+        ],
+        "computed_quantiles": [
+          {
+            "name": "cluster.external_auth_cluster.upstream_cx_length_ms",
+            "values": [
+              {"interval": 0, "cumulative": 0},
+              {"interval": 0, "cumulative": 0},
+              {"interval": 1.0435787, "cumulative": 1.0435787},
+              {"interval": 1.0941565, "cumulative": 1.0941565},
+              {"interval": 2.0860023, "cumulative": 2.0860023},
+              {"interval": 3.0665233, "cumulative": 3.0665233},
+              {"interval": 6.046609, "cumulative": 6.046609},
+              {"interval": 229.57333,"cumulative": 229.57333},
+              {"interval": 260,"cumulative": 260}
+            ]
+          },
+          {
+            "name": "http.admin.downstream_rq_time",
+            "values": [
+              {"interval": null, "cumulative": 0},
+              {"interval": null, "cumulative": 0},
+              {"interval": null, "cumulative": 1.0435787},
+              {"interval": null, "cumulative": 1.0941565},
+              {"interval": null, "cumulative": 2.0860023},
+              {"interval": null, "cumulative": 3.0665233},
+              {"interval": null, "cumulative": 6.046609},
+              {"interval": null, "cumulative": 229.57333},
+              {"interval": null, "cumulative": 260}
+            ]
+          }
+        ]
+      }
     }
-  }
+ 
+  .. http:get:: /stats?format=json&usedonly
+
+  Outputs statistics that Envoy has updated (counters incremented at least once, 
+  gauges changed at least once, and histograms added to at least once) in JSON format.
 
 .. http:get:: /stats?format=prometheus
 
@@ -300,3 +319,39 @@ The fields are:
   Use the /runtime_modify endpoint with care. Changes are effectively immediately. It is
   **critical** that the admin interface is :ref:`properly secured
   <operations_admin_interface_security>`.
+  
+  .. _operations_admin_interface_hystrix_event_stream:
+
+.. http:get:: /hystrix_event_stream
+
+  This endpoint is intended to be used as the stream source for
+  `Hystrix dashboard <https://github.com/Netflix-Skunkworks/hystrix-dashboard/wiki>`_.
+  a GET to this endpoint will trriger a stream of statistics from envoy in 
+  `text/event-stream <https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events/Using_server-sent_events>`_ 
+  format, as expected by the Hystrix dashboard. 
+  
+  If invoked from a browser or a terminal, the response will be shown as a continous stream, 
+  sent in intervals defined by the :ref:`Bootstrap <envoy_api_msg_config.bootstrap.v2.Bootstrap>` 
+  :ref:`stats_flush_interval <envoy_api_field_config.bootstrap.v2.Bootstrap.stats_flush_interval>`
+
+  This handler is enabled only when a Hystrix sink is enabled in the config file as documented
+  :ref:`here <envoy_api_msg_config.metrics.v2.HystrixSink>`.
+  
+  As Envoy's and Hystrix resiliency mechanisms differ, some of the statistics shown in the dashboard 
+  had to be adapted:
+  
+  * **Thread pool rejections** - Generally similar to what's called short circuited in Envoy, 
+    and counted by *upstream_rq_pending_overflow*, although the term thread pool is not accurate for 
+    Envoy. Both in Hystrix and Envoy, the result is rejected requests which are not passed upstream. 
+  * **circuit breaker status (closed or open)** - Since in Envoy, a circuit is opened based on the 
+    current number of connections/requests in queue, there is no sleeping window for circuit breaker, 
+    circuit open/closed is momentary. Hence, we set the circuit breaker status to "forced closed".
+  * **Short-circuited (rejected)** - The term exists in Envoy but refers to requests not sent because 
+    of passing a limit (queue or connections), while in Hystrix it refers to requests not sent because 
+    of high percentage of service unavailable responses during some time frame. 
+    In Envoy, service unavailable response will cause **outlier detection** - removing a node off the 
+    load balancer pool, but requests are not rejected as a result. Therefore, this counter is always 
+    set to '0'.
+  * Latency information is currently unavailable.
+  
+  

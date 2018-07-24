@@ -124,88 +124,6 @@ bool Common::resolveServiceAndMethod(const Http::HeaderEntry* path, std::string*
   return true;
 }
 
-Status::GrpcStatus Common::httpToGrpcStatus(uint64_t http_response_status) {
-  // From
-  // https://github.com/grpc/grpc/blob/master/doc/http-grpc-status-mapping.md.
-  switch (http_response_status) {
-  case 400:
-    return Status::GrpcStatus::Internal;
-  case 401:
-    return Status::GrpcStatus::Unauthenticated;
-  case 403:
-    return Status::GrpcStatus::PermissionDenied;
-  case 404:
-    return Status::GrpcStatus::Unimplemented;
-  case 429:
-  case 502:
-  case 503:
-  case 504:
-    return Status::GrpcStatus::Unavailable;
-  default:
-    return Status::GrpcStatus::Unknown;
-  }
-}
-
-uint64_t Common::grpcToHttpStatus(Status::GrpcStatus grpc_status) {
-  // From https://cloud.google.com/apis/design/errors#handling_errors.
-  switch (grpc_status) {
-  case Status::GrpcStatus::Ok:
-    return 200;
-  case Status::GrpcStatus::Canceled:
-    // Client closed request.
-    return 499;
-  case Status::GrpcStatus::Unknown:
-    // Internal server error.
-    return 500;
-  case Status::GrpcStatus::InvalidArgument:
-    // Bad request.
-    return 400;
-  case Status::GrpcStatus::DeadlineExceeded:
-    // Gateway Time-out.
-    return 504;
-  case Status::GrpcStatus::NotFound:
-    // Not found.
-    return 404;
-  case Status::GrpcStatus::AlreadyExists:
-    // Conflict.
-    return 409;
-  case Status::GrpcStatus::PermissionDenied:
-    // Forbidden.
-    return 403;
-  case Status::GrpcStatus::ResourceExhausted:
-    //  Too many requests.
-    return 429;
-  case Status::GrpcStatus::FailedPrecondition:
-    // Bad request.
-    return 400;
-  case Status::GrpcStatus::Aborted:
-    // Conflict.
-    return 409;
-  case Status::GrpcStatus::OutOfRange:
-    // Bad request.
-    return 400;
-  case Status::GrpcStatus::Unimplemented:
-    // Not implemented.
-    return 501;
-  case Status::GrpcStatus::Internal:
-    // Internal server error.
-    return 500;
-  case Status::GrpcStatus::Unavailable:
-    // Service unavailable.
-    return 503;
-  case Status::GrpcStatus::DataLoss:
-    // Internal server error.
-    return 500;
-  case Status::GrpcStatus::Unauthenticated:
-    // Unauthorized.
-    return 401;
-  case Status::GrpcStatus::InvalidCode:
-  default:
-    // Internal server error.
-    return 500;
-  }
-}
-
 Buffer::InstancePtr Common::serializeBody(const Protobuf::Message& message) {
   // http://www.grpc.io/docs/guides/wire.html
   // Reserve enough space for the entire message and the 5 byte header.
@@ -228,9 +146,72 @@ Buffer::InstancePtr Common::serializeBody(const Protobuf::Message& message) {
   return body;
 }
 
+std::chrono::milliseconds Common::getGrpcTimeout(Http::HeaderMap& request_headers) {
+  std::chrono::milliseconds timeout(0);
+  Http::HeaderEntry* header_grpc_timeout_entry = request_headers.GrpcTimeout();
+  if (header_grpc_timeout_entry) {
+    uint64_t grpc_timeout;
+    const char* unit =
+        StringUtil::strtoul(header_grpc_timeout_entry->value().c_str(), grpc_timeout);
+    if (unit != nullptr && *unit != '\0') {
+      switch (*unit) {
+      case 'H':
+        timeout = std::chrono::hours(grpc_timeout);
+        break;
+      case 'M':
+        timeout = std::chrono::minutes(grpc_timeout);
+        break;
+      case 'S':
+        timeout = std::chrono::seconds(grpc_timeout);
+        break;
+      case 'm':
+        timeout = std::chrono::milliseconds(grpc_timeout);
+        break;
+      case 'u':
+        timeout = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::microseconds(grpc_timeout));
+        if (timeout < std::chrono::microseconds(grpc_timeout)) {
+          timeout++;
+        }
+        break;
+      case 'n':
+        timeout = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::nanoseconds(grpc_timeout));
+        if (timeout < std::chrono::nanoseconds(grpc_timeout)) {
+          timeout++;
+        }
+        break;
+      }
+    }
+  }
+  return timeout;
+}
+
+void Common::toGrpcTimeout(const std::chrono::milliseconds& timeout, Http::HeaderString& value) {
+  uint64_t time = timeout.count();
+  static const char units[] = "mSMH";
+  const char* unit = units; // start with milliseconds
+  static constexpr size_t MAX_GRPC_TIMEOUT_VALUE = 99999999;
+  if (time > MAX_GRPC_TIMEOUT_VALUE) {
+    time /= 1000; // Convert from milliseconds to seconds
+    unit++;
+  }
+  while (time > MAX_GRPC_TIMEOUT_VALUE) {
+    if (*unit == 'H') {
+      time = MAX_GRPC_TIMEOUT_VALUE; // No bigger unit available, clip to max 8 digit hours.
+    } else {
+      time /= 60; // Convert from seconds to minutes to hours
+      unit++;
+    }
+  }
+  value.setInteger(time);
+  value.append(unit, 1);
+}
+
 Http::MessagePtr Common::prepareHeaders(const std::string& upstream_cluster,
                                         const std::string& service_full_name,
-                                        const std::string& method_name) {
+                                        const std::string& method_name,
+                                        const absl::optional<std::chrono::milliseconds>& timeout) {
   Http::MessagePtr message(new Http::RequestMessageImpl());
   message->headers().insertMethod().value().setReference(Http::Headers::get().MethodValues.Post);
   message->headers().insertPath().value().append("/", 1);
@@ -239,9 +220,14 @@ Http::MessagePtr Common::prepareHeaders(const std::string& upstream_cluster,
   message->headers().insertPath().value().append("/", 1);
   message->headers().insertPath().value().append(method_name.c_str(), method_name.size());
   message->headers().insertHost().value(upstream_cluster);
+  // According to https://github.com/grpc/grpc/blob/master/doc/PROTOCOL-HTTP2.md TE should appear
+  // before Timeout and ContentType.
+  message->headers().insertTE().value().setReference(Http::Headers::get().TEValues.Trailers);
+  if (timeout) {
+    toGrpcTimeout(timeout.value(), message->headers().insertGrpcTimeout().value());
+  }
   message->headers().insertContentType().value().setReference(
       Http::Headers::get().ContentTypeValues.Grpc);
-  message->headers().insertTE().value().setReference(Http::Headers::get().TEValues.Trailers);
 
   return message;
 }

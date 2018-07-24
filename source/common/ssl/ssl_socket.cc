@@ -4,6 +4,7 @@
 #include "common/common/empty_string.h"
 #include "common/common/hex.h"
 #include "common/http/headers.h"
+#include "common/ssl/utility.h"
 
 #include "absl/strings/str_replace.h"
 #include "openssl/err.h"
@@ -14,8 +15,8 @@ using Envoy::Network::PostIoAction;
 namespace Envoy {
 namespace Ssl {
 
-SslSocket::SslSocket(Context& ctx, InitialState state)
-    : ctx_(dynamic_cast<Ssl::ContextImpl&>(ctx)), ssl_(ctx_.newSsl()) {
+SslSocket::SslSocket(ContextSharedPtr ctx, InitialState state)
+    : ctx_(std::dynamic_pointer_cast<ContextImpl>(ctx)), ssl_(ctx_->newSsl()) {
   if (state == InitialState::Client) {
     SSL_set_connect_state(ssl_.get());
   } else {
@@ -98,7 +99,7 @@ PostIoAction SslSocket::doHandshake() {
   if (rc == 1) {
     ENVOY_CONN_LOG(debug, "handshake complete", callbacks_->connection());
     handshake_complete_ = true;
-    ctx_.logHandshake(ssl_.get());
+    ctx_->logHandshake(ssl_.get());
     callbacks_->raiseEvent(Network::ConnectionEvent::Connected);
 
     // It's possible that we closed during the handshake callback.
@@ -125,7 +126,7 @@ void SslSocket::drainErrorQueue() {
   while (uint64_t err = ERR_get_error()) {
     if (ERR_GET_LIB(err) == ERR_LIB_SSL) {
       if (ERR_GET_REASON(err) == SSL_R_PEER_DID_NOT_RETURN_A_CERTIFICATE) {
-        ctx_.stats().fail_verify_no_cert_.inc();
+        ctx_->stats().fail_verify_no_cert_.inc();
         saw_counted_error = true;
       } else if (ERR_GET_REASON(err) == SSL_R_CERTIFICATE_VERIFY_FAILED) {
         saw_counted_error = true;
@@ -138,7 +139,7 @@ void SslSocket::drainErrorQueue() {
                    ERR_reason_error_string(err));
   }
   if (saw_error && !saw_counted_error) {
-    ctx_.stats().connection_error_.inc();
+    ctx_->stats().connection_error_.inc();
   }
 }
 
@@ -246,7 +247,7 @@ const std::string& SslSocket::sha256PeerCertificateDigest() const {
   std::vector<uint8_t> computed_hash(SHA256_DIGEST_LENGTH);
   unsigned int n;
   X509_digest(cert.get(), EVP_sha256(), computed_hash.data(), &n);
-  RELEASE_ASSERT(n == computed_hash.size());
+  RELEASE_ASSERT(n == computed_hash.size(), "");
   cached_sha_256_peer_certificate_digest_ = Hex::encode(computed_hash);
   return cached_sha_256_peer_certificate_digest_;
 }
@@ -262,18 +263,18 @@ const std::string& SslSocket::urlEncodedPemEncodedPeerCertificate() const {
   }
 
   bssl::UniquePtr<BIO> buf(BIO_new(BIO_s_mem()));
-  RELEASE_ASSERT(buf != nullptr);
-  RELEASE_ASSERT(PEM_write_bio_X509(buf.get(), cert.get()) == 1);
+  RELEASE_ASSERT(buf != nullptr, "");
+  RELEASE_ASSERT(PEM_write_bio_X509(buf.get(), cert.get()) == 1, "");
   const uint8_t* output;
   size_t length;
-  RELEASE_ASSERT(BIO_mem_contents(buf.get(), &output, &length) == 1);
+  RELEASE_ASSERT(BIO_mem_contents(buf.get(), &output, &length) == 1, "");
   absl::string_view pem(reinterpret_cast<const char*>(output), length);
   cached_url_encoded_pem_encoded_peer_certificate_ = absl::StrReplaceAll(
       pem, {{"\n", "%0A"}, {" ", "%20"}, {"+", "%2B"}, {"/", "%2F"}, {"=", "%3D"}});
   return cached_url_encoded_pem_encoded_peer_certificate_;
 }
 
-std::string SslSocket::uriSanPeerCertificate() {
+std::string SslSocket::uriSanPeerCertificate() const {
   bssl::UniquePtr<X509> cert(SSL_get_peer_certificate(ssl_.get()));
   if (!cert) {
     return "";
@@ -289,7 +290,7 @@ std::vector<std::string> SslSocket::dnsSansPeerCertificate() {
   return getDnsSansFromCertificate(cert.get());
 }
 
-std::string SslSocket::getUriSanFromCertificate(X509* cert) {
+std::string SslSocket::getUriSanFromCertificate(X509* cert) const {
   bssl::UniquePtr<GENERAL_NAMES> san_names(
       static_cast<GENERAL_NAMES*>(X509_get_ext_d2i(cert, NID_subject_alt_name, nullptr, nullptr)));
   if (san_names == nullptr) {
@@ -339,9 +340,17 @@ std::string SslSocket::protocol() const {
   return std::string(reinterpret_cast<const char*>(proto), proto_len);
 }
 
+std::string SslSocket::serialNumberPeerCertificate() const {
+  bssl::UniquePtr<X509> cert(SSL_get_peer_certificate(ssl_.get()));
+  if (!cert) {
+    return "";
+  }
+  return Utility::getSerialNumberFromCertificate(*cert.get());
+}
+
 std::string SslSocket::getSubjectFromCertificate(X509* cert) const {
   bssl::UniquePtr<BIO> buf(BIO_new(BIO_s_mem()));
-  RELEASE_ASSERT(buf != nullptr);
+  RELEASE_ASSERT(buf != nullptr, "");
 
   // flags=XN_FLAG_RFC2253 is the documented parameter for single-line output in RFC 2253 format.
   // Example from the RFC:
@@ -379,22 +388,19 @@ ClientSslSocketFactory::ClientSslSocketFactory(const ClientContextConfig& config
     : ssl_ctx_(manager.createSslClientContext(stats_scope, config)) {}
 
 Network::TransportSocketPtr ClientSslSocketFactory::createTransportSocket() const {
-  return std::make_unique<Ssl::SslSocket>(*ssl_ctx_, Ssl::InitialState::Client);
+  return std::make_unique<Ssl::SslSocket>(ssl_ctx_, Ssl::InitialState::Client);
 }
 
 bool ClientSslSocketFactory::implementsSecureTransport() const { return true; }
 
 ServerSslSocketFactory::ServerSslSocketFactory(const ServerContextConfig& config,
-                                               const std::string& listener_name,
-                                               const std::vector<std::string>& server_names,
-                                               bool skip_context_update,
                                                Ssl::ContextManager& manager,
-                                               Stats::Scope& stats_scope)
-    : ssl_ctx_(manager.createSslServerContext(listener_name, server_names, stats_scope, config,
-                                              skip_context_update)) {}
+                                               Stats::Scope& stats_scope,
+                                               const std::vector<std::string>& server_names)
+    : ssl_ctx_(manager.createSslServerContext(stats_scope, config, server_names)) {}
 
 Network::TransportSocketPtr ServerSslSocketFactory::createTransportSocket() const {
-  return std::make_unique<Ssl::SslSocket>(*ssl_ctx_, Ssl::InitialState::Server);
+  return std::make_unique<Ssl::SslSocket>(ssl_ctx_, Ssl::InitialState::Server);
 }
 
 bool ServerSslSocketFactory::implementsSecureTransport() const { return true; }

@@ -12,7 +12,10 @@ envoy_package()
 envoy_cc_library(
     name = "backtrace_lib",
     hdrs = ["backtrace.h"],
-    external_deps = ["backward"],
+    external_deps = [
+        "backward",
+        "abseil_symbolize",
+    ],
     tags = ["backtrace"],
     deps = ["//source/common/common:minimal_logger_lib"],
 )
@@ -22,7 +25,6 @@ envoy_cc_library(
     srcs = ["configuration_impl.cc"],
     hdrs = ["configuration_impl.h"],
     deps = [
-        ":lds_api_lib",
         "//include/envoy/http:filter_interface",
         "//include/envoy/network:connection_interface",
         "//include/envoy/network:filter_interface",
@@ -150,6 +152,7 @@ envoy_cc_library(
     deps = [
         "//include/envoy/network:address_interface",
         "//include/envoy/server:options_interface",
+        "//include/envoy/stats:stats_interface",
         "//source/common/common:macros",
         "//source/common/common:version_lib",
         "//source/common/stats:stats_lib",
@@ -198,12 +201,16 @@ envoy_cc_library(
         ":configuration_lib",
         ":drain_manager_lib",
         ":init_manager_lib",
+        ":lds_api_lib",
         "//include/envoy/server:filter_config_interface",
         "//include/envoy/server:listener_manager_interface",
         "//include/envoy/server:transport_socket_config_interface",
         "//include/envoy/server:worker_interface",
         "//source/common/api:os_sys_calls_lib",
+        "//source/common/common:empty_string",
         "//source/common/config:utility_lib",
+        "//source/common/network:cidr_range_lib",
+        "//source/common/network:lc_trie_lib",
         "//source/common/network:listen_socket_lib",
         "//source/common/network:resolver_lib",
         "//source/common/network:socket_option_factory_lib",
@@ -211,7 +218,9 @@ envoy_cc_library(
         "//source/common/protobuf:utility_lib",
         "//source/common/ssl:context_config_lib",
         "//source/extensions/filters/listener:well_known_names",
+        "//source/extensions/filters/network:well_known_names",
         "//source/extensions/transport_sockets:well_known_names",
+        "@envoy_api//envoy/admin/v2alpha:config_dump_cc",
         "@envoy_api//envoy/api/v2:lds_cc",
     ],
 )
@@ -232,6 +241,14 @@ envoy_cc_library(
         "@envoy_api//envoy/service/discovery/v2:hds_cc",
         "@envoy_api//envoy/service/metrics/v2:metrics_service_cc",
         "@envoy_api//envoy/service/ratelimit/v2:rls_cc",
+    ],
+)
+
+envoy_cc_library(
+    name = "resource_monitor_config_lib",
+    hdrs = ["resource_monitor_config_impl.h"],
+    deps = [
+        "//include/envoy/server:resource_monitor_config_interface",
     ],
 )
 
@@ -266,14 +283,17 @@ envoy_cc_library(
         "//source/common/common:version_lib",
         "//source/common/config:bootstrap_json_lib",
         "//source/common/config:utility_lib",
+        "//source/common/grpc:async_client_manager_lib",
         "//source/common/local_info:local_info_lib",
         "//source/common/memory:stats_lib",
         "//source/common/protobuf:utility_lib",
         "//source/common/router:rds_lib",
         "//source/common/runtime:runtime_lib",
+        "//source/common/secret:secret_manager_impl_lib",
         "//source/common/singleton:manager_impl_lib",
         "//source/common/stats:thread_local_store_lib",
         "//source/common/upstream:cluster_manager_lib",
+        "//source/common/upstream:health_discovery_service_lib",
         "//source/server/http:admin_lib",
         "@envoy_api//envoy/config/bootstrap/v2:bootstrap_cc",
     ],

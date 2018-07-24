@@ -21,19 +21,10 @@ namespace Address {
 
 namespace {
 
-// Check if an IP family is supported on this machine.
-bool ipFamilySupported(int domain) {
-  const int fd = ::socket(domain, SOCK_STREAM, 0);
-  if (fd >= 0) {
-    RELEASE_ASSERT(::close(fd) == 0);
-  }
-  return fd != -1;
-}
-
 // Validate that IPv4 is supported on this platform, raise an exception for the
 // given address if not.
 void validateIpv4Supported(const std::string& address) {
-  static const bool supported = ipFamilySupported(AF_INET);
+  static const bool supported = Network::Address::ipFamilySupported(AF_INET);
   if (!supported) {
     throw EnvoyException(
         fmt::format("IPv4 addresses are not supported on this machine: {}", address));
@@ -43,7 +34,7 @@ void validateIpv4Supported(const std::string& address) {
 // Validate that IPv6 is supported on this platform, raise an exception for the
 // given address if not.
 void validateIpv6Supported(const std::string& address) {
-  static const bool supported = ipFamilySupported(AF_INET6);
+  static const bool supported = Network::Address::ipFamilySupported(AF_INET6);
   if (!supported) {
     throw EnvoyException(
         fmt::format("IPv6 addresses are not supported on this machine: {}", address));
@@ -52,18 +43,27 @@ void validateIpv6Supported(const std::string& address) {
 
 } // namespace
 
+// Check if an IP family is supported on this machine.
+bool ipFamilySupported(int domain) {
+  const int fd = ::socket(domain, SOCK_STREAM, 0);
+  if (fd >= 0) {
+    RELEASE_ASSERT(::close(fd) == 0, "");
+  }
+  return fd != -1;
+}
+
 Address::InstanceConstSharedPtr addressFromSockAddr(const sockaddr_storage& ss, socklen_t ss_len,
                                                     bool v6only) {
-  RELEASE_ASSERT(ss_len == 0 || ss_len >= sizeof(sa_family_t));
+  RELEASE_ASSERT(ss_len == 0 || ss_len >= sizeof(sa_family_t), "");
   switch (ss.ss_family) {
   case AF_INET: {
-    RELEASE_ASSERT(ss_len == 0 || ss_len == sizeof(sockaddr_in));
+    RELEASE_ASSERT(ss_len == 0 || ss_len == sizeof(sockaddr_in), "");
     const struct sockaddr_in* sin = reinterpret_cast<const struct sockaddr_in*>(&ss);
     ASSERT(AF_INET == sin->sin_family);
     return std::make_shared<Address::Ipv4Instance>(sin);
   }
   case AF_INET6: {
-    RELEASE_ASSERT(ss_len == 0 || ss_len == sizeof(sockaddr_in6));
+    RELEASE_ASSERT(ss_len == 0 || ss_len == sizeof(sockaddr_in6), "");
     const struct sockaddr_in6* sin6 = reinterpret_cast<const struct sockaddr_in6*>(&ss);
     ASSERT(AF_INET6 == sin6->sin6_family);
     if (!v6only && IN6_IS_ADDR_V4MAPPED(&sin6->sin6_addr)) {
@@ -84,13 +84,13 @@ Address::InstanceConstSharedPtr addressFromSockAddr(const sockaddr_storage& ss, 
   case AF_UNIX: {
     const struct sockaddr_un* sun = reinterpret_cast<const struct sockaddr_un*>(&ss);
     ASSERT(AF_UNIX == sun->sun_family);
-    RELEASE_ASSERT(ss_len == 0 || ss_len >= offsetof(struct sockaddr_un, sun_path) + 1);
+    RELEASE_ASSERT(ss_len == 0 || ss_len >= offsetof(struct sockaddr_un, sun_path) + 1, "");
     return std::make_shared<Address::PipeInstance>(sun, ss_len);
   }
   default:
     throw EnvoyException(fmt::format("Unexpected sockaddr family: {}", ss.ss_family));
   }
-  NOT_REACHED;
+  NOT_REACHED_GCOVR_EXCL_LINE;
 }
 
 InstanceConstSharedPtr addressFromFd(int fd) {
@@ -104,7 +104,7 @@ InstanceConstSharedPtr addressFromFd(int fd) {
   int socket_v6only = 0;
   if (ss.ss_family == AF_INET6) {
     socklen_t size_int = sizeof(socket_v6only);
-    RELEASE_ASSERT(::getsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &socket_v6only, &size_int) == 0);
+    RELEASE_ASSERT(::getsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &socket_v6only, &size_int) == 0, "");
   }
   return addressFromSockAddr(ss, ss_len, rc == 0 && socket_v6only);
 }
@@ -161,11 +161,11 @@ int InstanceBase::socketFromSocketType(SocketType socketType) const {
   }
 
   int fd = ::socket(domain, flags, 0);
-  RELEASE_ASSERT(fd != -1);
+  RELEASE_ASSERT(fd != -1, "");
 
 #ifdef __APPLE__
   // Cannot set SOCK_NONBLOCK as a ::socket flag.
-  RELEASE_ASSERT(fcntl(fd, F_SETFL, O_NONBLOCK) != -1);
+  RELEASE_ASSERT(fcntl(fd, F_SETFL, O_NONBLOCK) != -1, "");
 #endif
 
   return fd;
@@ -204,6 +204,12 @@ Ipv4Instance::Ipv4Instance(uint32_t port) : InstanceBase(Type::Ip) {
   friendly_name_ = fmt::format("0.0.0.0:{}", port);
   validateIpv4Supported(friendly_name_);
   ip_.friendly_address_ = "0.0.0.0";
+}
+
+bool Ipv4Instance::operator==(const Instance& rhs) const {
+  const Ipv4Instance* rhs_casted = dynamic_cast<const Ipv4Instance*>(&rhs);
+  return (rhs_casted && (ip_.ipv4_.address() == rhs_casted->ip_.ipv4_.address()) &&
+          (ip_.port() == rhs_casted->ip_.port()));
 }
 
 int Ipv4Instance::bind(int fd) const {
@@ -263,6 +269,12 @@ Ipv6Instance::Ipv6Instance(const std::string& address, uint32_t port) : Instance
 
 Ipv6Instance::Ipv6Instance(uint32_t port) : Ipv6Instance("", port) {}
 
+bool Ipv6Instance::operator==(const Instance& rhs) const {
+  const Ipv6Instance* rhs_casted = dynamic_cast<const Ipv6Instance*>(&rhs);
+  return (rhs_casted && (ip_.ipv6_.address() == rhs_casted->ip_.ipv6_.address()) &&
+          (ip_.port() == rhs_casted->ip_.port()));
+}
+
 int Ipv6Instance::bind(int fd) const {
   return ::bind(fd, reinterpret_cast<const sockaddr*>(&ip_.ipv6_.address_),
                 sizeof(ip_.ipv6_.address_));
@@ -278,7 +290,7 @@ int Ipv6Instance::socket(SocketType type) const {
 
   // Setting IPV6_V6ONLY resticts the IPv6 socket to IPv6 connections only.
   const int v6only = ip_.v6only_;
-  RELEASE_ASSERT(::setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &v6only, sizeof(v6only)) != -1);
+  RELEASE_ASSERT(::setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &v6only, sizeof(v6only)) != -1, "");
   return fd;
 }
 
@@ -288,7 +300,7 @@ PipeInstance::PipeInstance(const sockaddr_un* address, socklen_t ss_len)
 #if !defined(__linux__)
     throw EnvoyException("Abstract AF_UNIX sockets are only supported on linux.");
 #endif
-    RELEASE_ASSERT(ss_len >= offsetof(struct sockaddr_un, sun_path) + 1);
+    RELEASE_ASSERT(ss_len >= offsetof(struct sockaddr_un, sun_path) + 1, "");
     abstract_namespace_ = true;
     address_length_ = ss_len - offsetof(struct sockaddr_un, sun_path);
   }
@@ -318,6 +330,8 @@ PipeInstance::PipeInstance(const std::string& pipe_path) : InstanceBase(Type::Pi
     address_.sun_path[0] = '\0';
   }
 }
+
+bool PipeInstance::operator==(const Instance& rhs) const { return asString() == rhs.asString(); }
 
 int PipeInstance::bind(int fd) const {
   if (abstract_namespace_) {

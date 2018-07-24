@@ -1,8 +1,10 @@
 #pragma once
 
+#include <sys/ioctl.h>
 #include <sys/mman.h>   // for mode_t
 #include <sys/socket.h> // for sockaddr
 #include <sys/stat.h>
+#include <sys/uio.h> // for iovec
 
 #include <memory>
 #include <string>
@@ -22,6 +24,11 @@ public:
   virtual int bind(int sockfd, const sockaddr* addr, socklen_t addrlen) PURE;
 
   /**
+   * @see ioctl (man 2 ioctl)
+   */
+  virtual int ioctl(int sockfd, unsigned long int request, void* argp) PURE;
+
+  /**
    * Open file by full_path with given flags and mode.
    * @return file descriptor.
    */
@@ -32,6 +39,16 @@ public:
    * @return number of bytes written if non negative, otherwise error code.
    */
   virtual ssize_t write(int fd, const void* buffer, size_t num_bytes) PURE;
+
+  /**
+   * @see writev (man 2 writev)
+   */
+  virtual ssize_t writev(int fd, const iovec* iovec, int num_iovec) PURE;
+
+  /**
+   * @see readv (man 2 readv)
+   */
+  virtual ssize_t readv(int fd, const iovec* iovec, int num_iovec) PURE;
 
   /**
    * @see recv (man 2 recv)

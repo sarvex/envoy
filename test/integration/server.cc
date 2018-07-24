@@ -15,6 +15,7 @@
 #include "test/integration/integration.h"
 #include "test/integration/utility.h"
 #include "test/mocks/runtime/mocks.h"
+#include "test/mocks/server/mocks.h"
 #include "test/test_common/environment.h"
 
 #include "gtest/gtest.h"
@@ -47,9 +48,9 @@ void IntegrationTestServer::start(const Network::Address::IpVersion version,
 
   // Now wait for the initial listeners to actually be listening on the worker. At this point
   // the server is up and ready for testing.
-  std::unique_lock<std::mutex> guard(listeners_mutex_);
+  Thread::LockGuard guard(listeners_mutex_);
   while (pending_listeners_ != 0) {
-    listeners_cv_.wait(guard);
+    listeners_cv_.wait(listeners_mutex_); // Safe since CondVar::wait won't throw.
   }
   ENVOY_LOG(info, "listener wait complete");
 }
@@ -71,10 +72,10 @@ void IntegrationTestServer::onWorkerListenerAdded() {
     on_worker_listener_added_cb_();
   }
 
-  std::unique_lock<std::mutex> guard(listeners_mutex_);
+  Thread::LockGuard guard(listeners_mutex_);
   if (pending_listeners_ > 0) {
     pending_listeners_--;
-    listeners_cv_.notify_one();
+    listeners_cv_.notifyOne();
   }
 }
 
@@ -92,7 +93,8 @@ void IntegrationTestServer::threadRoutine(const Network::Address::IpVersion vers
 
   ThreadLocal::InstanceImpl tls;
   Stats::HeapRawStatDataAllocator stats_allocator;
-  Stats::ThreadLocalStoreImpl stats_store(stats_allocator);
+  Stats::StatsOptionsImpl options_;
+  Stats::ThreadLocalStoreImpl stats_store(options_, stats_allocator);
   stat_store_ = &stats_store;
   Runtime::RandomGeneratorPtr random_generator;
   if (deterministic) {

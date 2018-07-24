@@ -4,17 +4,19 @@
 #include <cstdint>
 #include <list>
 #include <memory>
-#include <mutex>
 #include <string>
 #include <unordered_set>
+
+#include "common/common/lock_guard.h"
 
 namespace Envoy {
 namespace Stats {
 
-ThreadLocalStoreImpl::ThreadLocalStoreImpl(RawStatDataAllocator& alloc)
-    : alloc_(alloc), default_scope_(createScope("")),
+ThreadLocalStoreImpl::ThreadLocalStoreImpl(const Stats::StatsOptions& stats_options,
+                                           StatDataAllocator& alloc)
+    : stats_options_(stats_options), alloc_(alloc), default_scope_(createScope("")),
       tag_producer_(std::make_unique<TagProducerImpl>()),
-      num_last_resort_stats_(default_scope_->counter("stats.overflow")) {}
+      num_last_resort_stats_(default_scope_->counter("stats.overflow")), source_(*this) {}
 
 ThreadLocalStoreImpl::~ThreadLocalStoreImpl() {
   ASSERT(shutting_down_);
@@ -22,13 +24,13 @@ ThreadLocalStoreImpl::~ThreadLocalStoreImpl() {
   ASSERT(scopes_.empty());
 }
 
-std::list<CounterSharedPtr> ThreadLocalStoreImpl::counters() const {
+std::vector<CounterSharedPtr> ThreadLocalStoreImpl::counters() const {
   // Handle de-dup due to overlapping scopes.
-  std::list<CounterSharedPtr> ret;
+  std::vector<CounterSharedPtr> ret;
   std::unordered_set<std::string> names;
-  std::unique_lock<std::mutex> lock(lock_);
+  Thread::LockGuard lock(lock_);
   for (ScopeImpl* scope : scopes_) {
-    for (auto counter : scope->central_cache_.counters_) {
+    for (auto& counter : scope->central_cache_.counters_) {
       if (names.insert(counter.first).second) {
         ret.push_back(counter.second);
       }
@@ -40,18 +42,18 @@ std::list<CounterSharedPtr> ThreadLocalStoreImpl::counters() const {
 
 ScopePtr ThreadLocalStoreImpl::createScope(const std::string& name) {
   std::unique_ptr<ScopeImpl> new_scope(new ScopeImpl(*this, name));
-  std::unique_lock<std::mutex> lock(lock_);
+  Thread::LockGuard lock(lock_);
   scopes_.emplace(new_scope.get());
   return std::move(new_scope);
 }
 
-std::list<GaugeSharedPtr> ThreadLocalStoreImpl::gauges() const {
+std::vector<GaugeSharedPtr> ThreadLocalStoreImpl::gauges() const {
   // Handle de-dup due to overlapping scopes.
-  std::list<GaugeSharedPtr> ret;
+  std::vector<GaugeSharedPtr> ret;
   std::unordered_set<std::string> names;
-  std::unique_lock<std::mutex> lock(lock_);
+  Thread::LockGuard lock(lock_);
   for (ScopeImpl* scope : scopes_) {
-    for (auto gauge : scope->central_cache_.gauges_) {
+    for (auto& gauge : scope->central_cache_.gauges_) {
       if (names.insert(gauge.first).second) {
         ret.push_back(gauge.second);
       }
@@ -61,11 +63,11 @@ std::list<GaugeSharedPtr> ThreadLocalStoreImpl::gauges() const {
   return ret;
 }
 
-std::list<ParentHistogramSharedPtr> ThreadLocalStoreImpl::histograms() const {
+std::vector<ParentHistogramSharedPtr> ThreadLocalStoreImpl::histograms() const {
   // Handle de-dup due to overlapping scopes.
-  std::list<ParentHistogramSharedPtr> ret;
+  std::vector<ParentHistogramSharedPtr> ret;
   std::unordered_set<std::string> names;
-  std::unique_lock<std::mutex> lock(lock_);
+  Thread::LockGuard lock(lock_);
   // TODO(ramaraochavali): As histograms don't share storage, there is a chance of duplicate names
   // here. We need to create global storage for histograms similar to how we have a central storage
   // in shared memory for counters/gauges. In the interim, no de-dup is done here. This may result
@@ -127,7 +129,7 @@ void ThreadLocalStoreImpl::mergeInternal(PostMergeCb merge_complete_cb) {
 }
 
 void ThreadLocalStoreImpl::releaseScopeCrossThread(ScopeImpl* scope) {
-  std::unique_lock<std::mutex> lock(lock_);
+  Thread::LockGuard lock(lock_);
   ASSERT(scopes_.count(scope) == 1);
   scopes_.erase(scope);
 
@@ -154,22 +156,53 @@ void ThreadLocalStoreImpl::clearScopeFromCaches(uint64_t scope_id) {
   }
 }
 
-ThreadLocalStoreImpl::SafeAllocData ThreadLocalStoreImpl::safeAlloc(const std::string& name) {
-  RawStatData* data = alloc_.alloc(name);
-  if (!data) {
-    // If we run out of stat space from the allocator (which can happen if for example allocations
-    // are coming from a fixed shared memory region, we need to deal with this case the best we
-    // can. We must pass back the right allocator so that free() happens on the heap.
-    num_last_resort_stats_.inc();
-    return {*heap_allocator_.alloc(name), heap_allocator_};
-  } else {
-    return {*data, alloc_};
-  }
-}
-
 std::atomic<uint64_t> ThreadLocalStoreImpl::ScopeImpl::next_scope_id_;
 
 ThreadLocalStoreImpl::ScopeImpl::~ScopeImpl() { parent_.releaseScopeCrossThread(this); }
+
+template <class StatType>
+StatType& ThreadLocalStoreImpl::ScopeImpl::safeMakeStat(
+    const std::string& name,
+    std::unordered_map<std::string, std::shared_ptr<StatType>>& central_cache_map,
+    MakeStatFn<StatType> make_stat, std::shared_ptr<StatType>* tls_ref) {
+
+  // If we have a valid cache entry, return it.
+  if (tls_ref && *tls_ref) {
+    return **tls_ref;
+  }
+
+  // We must now look in the central store so we must be locked. We grab a reference to the
+  // central store location. It might contain nothing. In this case, we allocate a new stat.
+  Thread::LockGuard lock(parent_.lock_);
+  std::shared_ptr<StatType>& central_ref = central_cache_map[name];
+  if (!central_ref) {
+    std::vector<Tag> tags;
+    std::string tag_extracted_name = parent_.getTagsForName(name, tags);
+    std::shared_ptr<StatType> stat =
+        make_stat(parent_.alloc_, name, std::move(tag_extracted_name), std::move(tags));
+    if (stat == nullptr) {
+      parent_.num_last_resort_stats_.inc();
+      // TODO(jbuckland) Performing the fallback from non-heap allocator to heap allocator should be
+      // the responsibility of the non-heap allocator, not the client of the non-heap allocator.
+      // This branch will never be used in the non-hot-restart case, since the parent_.alloc_ object
+      // will throw instead of returning a nullptr; we should remove the assumption that this
+      // branching case is always available.
+      stat =
+          make_stat(parent_.heap_allocator_, name.substr(0, parent_.statsOptions().maxNameLength()),
+                    std::move(tag_extracted_name), std::move(tags));
+      ASSERT(stat != nullptr);
+    }
+    central_ref = stat;
+  }
+
+  // If we have a TLS location to store or allocation into, do it.
+  if (tls_ref) {
+    *tls_ref = central_ref;
+  }
+
+  // Finally we return the reference.
+  return *central_ref;
+}
 
 Counter& ThreadLocalStoreImpl::ScopeImpl::counter(const std::string& name) {
   // Determine the final name based on the prefix and the passed name.
@@ -184,30 +217,13 @@ Counter& ThreadLocalStoreImpl::ScopeImpl::counter(const std::string& name) {
         &parent_.tls_->getTyped<TlsCache>().scope_cache_[this->scope_id_].counters_[final_name];
   }
 
-  // If we have a valid cache entry, return it.
-  if (tls_ref && *tls_ref) {
-    return **tls_ref;
-  }
-
-  // We must now look in the central store so we must be locked. We grab a reference to the
-  // central store location. It might contain nothing. In this case, we allocate a new stat.
-  std::unique_lock<std::mutex> lock(parent_.lock_);
-  CounterSharedPtr& central_ref = central_cache_.counters_[final_name];
-  if (!central_ref) {
-    SafeAllocData alloc = parent_.safeAlloc(final_name);
-    std::vector<Tag> tags;
-    std::string tag_extracted_name = parent_.getTagsForName(final_name, tags);
-    central_ref.reset(
-        new CounterImpl(alloc.data_, alloc.free_, std::move(tag_extracted_name), std::move(tags)));
-  }
-
-  // If we have a TLS location to store or allocation into, do it.
-  if (tls_ref) {
-    *tls_ref = central_ref;
-  }
-
-  // Finally we return the reference.
-  return *central_ref;
+  return safeMakeStat<Counter>(
+      final_name, central_cache_.counters_,
+      [](StatDataAllocator& allocator, const std::string& name, std::string&& tag_extracted_name,
+         std::vector<Tag>&& tags) -> CounterSharedPtr {
+        return allocator.makeCounter(name, std::move(tag_extracted_name), std::move(tags));
+      },
+      tls_ref);
 }
 
 void ThreadLocalStoreImpl::ScopeImpl::deliverHistogramToSinks(const Histogram& histogram,
@@ -235,25 +251,13 @@ Gauge& ThreadLocalStoreImpl::ScopeImpl::gauge(const std::string& name) {
     tls_ref = &parent_.tls_->getTyped<TlsCache>().scope_cache_[this->scope_id_].gauges_[final_name];
   }
 
-  if (tls_ref && *tls_ref) {
-    return **tls_ref;
-  }
-
-  std::unique_lock<std::mutex> lock(parent_.lock_);
-  GaugeSharedPtr& central_ref = central_cache_.gauges_[final_name];
-  if (!central_ref) {
-    SafeAllocData alloc = parent_.safeAlloc(final_name);
-    std::vector<Tag> tags;
-    std::string tag_extracted_name = parent_.getTagsForName(final_name, tags);
-    central_ref.reset(
-        new GaugeImpl(alloc.data_, alloc.free_, std::move(tag_extracted_name), std::move(tags)));
-  }
-
-  if (tls_ref) {
-    *tls_ref = central_ref;
-  }
-
-  return *central_ref;
+  return safeMakeStat<Gauge>(
+      final_name, central_cache_.gauges_,
+      [](StatDataAllocator& allocator, const std::string& name, std::string&& tag_extracted_name,
+         std::vector<Tag>&& tags) -> GaugeSharedPtr {
+        return allocator.makeGauge(name, std::move(tag_extracted_name), std::move(tags));
+      },
+      tls_ref);
 }
 
 Histogram& ThreadLocalStoreImpl::ScopeImpl::histogram(const std::string& name) {
@@ -272,7 +276,7 @@ Histogram& ThreadLocalStoreImpl::ScopeImpl::histogram(const std::string& name) {
     return **tls_ref;
   }
 
-  std::unique_lock<std::mutex> lock(parent_.lock_);
+  Thread::LockGuard lock(parent_.lock_);
   ParentHistogramImplSharedPtr& central_ref = central_cache_.histograms_[final_name];
   if (!central_ref) {
     std::vector<Tag> tags;
@@ -346,7 +350,8 @@ ParentHistogramImpl::ParentHistogramImpl(const std::string& name, Store& parent,
                                          std::vector<Tag>&& tags)
     : MetricImpl(name, std::move(tag_extracted_name), std::move(tags)), parent_(parent),
       tls_scope_(tls_scope), interval_histogram_(hist_alloc()), cumulative_histogram_(hist_alloc()),
-      interval_statistics_(interval_histogram_), cumulative_statistics_(cumulative_histogram_) {}
+      interval_statistics_(interval_histogram_), cumulative_statistics_(cumulative_histogram_),
+      merged_(false) {}
 
 ParentHistogramImpl::~ParentHistogramImpl() {
   hist_free(interval_histogram_);
@@ -360,13 +365,13 @@ void ParentHistogramImpl::recordValue(uint64_t value) {
 }
 
 bool ParentHistogramImpl::used() const {
-  std::unique_lock<std::mutex> lock(merge_lock_);
-  return usedLockHeld();
+  // Consider ParentHistogram used only if has ever been merged.
+  return merged_;
 }
 
 void ParentHistogramImpl::merge() {
-  std::unique_lock<std::mutex> lock(merge_lock_);
-  if (usedLockHeld()) {
+  Thread::ReleasableLockGuard lock(merge_lock_);
+  if (merged_ || usedLockHeld()) {
     hist_clear(interval_histogram_);
     // Here we could copy all the pointers to TLS histograms in the tls_histogram_ list,
     // then release the lock before we do the actual merge. However it is not a big deal
@@ -376,15 +381,32 @@ void ParentHistogramImpl::merge() {
       tls_histogram->merge(interval_histogram_);
     }
     // Since TLS merge is done, we can release the lock here.
-    lock.unlock();
+    lock.release();
     hist_accumulate(cumulative_histogram_, &interval_histogram_, 1);
     cumulative_statistics_.refresh(cumulative_histogram_);
     interval_statistics_.refresh(interval_histogram_);
+    merged_ = true;
+  }
+}
+
+const std::string ParentHistogramImpl::summary() const {
+  if (used()) {
+    std::vector<std::string> summary;
+    const std::vector<double>& supported_quantiles_ref = interval_statistics_.supportedQuantiles();
+    summary.reserve(supported_quantiles_ref.size());
+    for (size_t i = 0; i < supported_quantiles_ref.size(); ++i) {
+      summary.push_back(fmt::format("P{}({},{})", 100 * supported_quantiles_ref[i],
+                                    interval_statistics_.computedQuantiles()[i],
+                                    cumulative_statistics_.computedQuantiles()[i]));
+    }
+    return absl::StrJoin(summary, " ");
+  } else {
+    return std::string("No recorded values");
   }
 }
 
 void ParentHistogramImpl::addTlsHistogram(const TlsHistogramSharedPtr& hist_ptr) {
-  std::unique_lock<std::mutex> lock(merge_lock_);
+  Thread::LockGuard lock(merge_lock_);
   tls_histograms_.emplace_back(hist_ptr);
 }
 

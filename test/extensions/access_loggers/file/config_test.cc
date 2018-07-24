@@ -1,3 +1,4 @@
+#include "envoy/config/accesslog/v2/file.pb.h"
 #include "envoy/registry/registry.h"
 
 #include "common/access_log/access_log_impl.h"
@@ -20,14 +21,14 @@ TEST(FileAccessLogConfigTest, ValidateFail) {
   NiceMock<Server::Configuration::MockFactoryContext> context;
 
   EXPECT_THROW(FileAccessLogFactory().createAccessLogInstance(
-                   envoy::config::filter::accesslog::v2::FileAccessLog(), nullptr, context),
+                   envoy::config::accesslog::v2::FileAccessLog(), nullptr, context),
                ProtoValidationException);
 }
 
 TEST(FileAccessLogConfigTest, ConfigureFromProto) {
   envoy::config::filter::accesslog::v2::AccessLog config;
 
-  envoy::config::filter::accesslog::v2::FileAccessLog fal_config;
+  envoy::config::accesslog::v2::FileAccessLog fal_config;
   fal_config.set_path("/dev/null");
 
   MessageUtil::jsonConvert(fal_config, *config.mutable_config());
@@ -36,7 +37,7 @@ TEST(FileAccessLogConfigTest, ConfigureFromProto) {
   EXPECT_THROW_WITH_MESSAGE(AccessLog::AccessLogFactory::fromProto(config, context), EnvoyException,
                             "Provided name for static registration lookup was empty.");
 
-  config.set_name(AccessLogNames::get().FILE);
+  config.set_name(AccessLogNames::get().File);
 
   AccessLog::InstanceSharedPtr log = AccessLog::AccessLogFactory::fromProto(config, context);
 
@@ -52,13 +53,13 @@ TEST(FileAccessLogConfigTest, ConfigureFromProto) {
 TEST(FileAccessLogConfigTest, FileAccessLogTest) {
   auto factory =
       Registry::FactoryRegistry<Server::Configuration::AccessLogInstanceFactory>::getFactory(
-          AccessLogNames::get().FILE);
+          AccessLogNames::get().File);
   ASSERT_NE(nullptr, factory);
 
   ProtobufTypes::MessagePtr message = factory->createEmptyConfigProto();
   ASSERT_NE(nullptr, message);
 
-  envoy::config::filter::accesslog::v2::FileAccessLog file_access_log;
+  envoy::config::accesslog::v2::FileAccessLog file_access_log;
   file_access_log.set_path("/dev/null");
   file_access_log.set_format("%START_TIME%");
   MessageUtil::jsonConvert(file_access_log, *message);
