@@ -3,10 +3,8 @@ project(network)
 #find_library(FMT_LIB fmt.lib REQUIRED)
 
 add_library(address_lib address_impl.cc)
-target_link_libraries(address_lib PUBLIC fmt.lib)
 
 add_library(cidr_range_lib cidr_range.cc)
-target_link_libraries(cidr_range_lib PUBLIC fmt.lib)
 
 add_library(connection_lib connection_impl.cc)
 
@@ -23,3 +21,5 @@ add_library(common_network_raw_buffer_socket_lib raw_buffer_socket.cc)
 add_library(resolver_impl_lib resolver_impl.cc)
 
 add_library(network_utility_lib utility.cc)
+
+add_library(socket_option_factory_lib socket_option_factory.cc)

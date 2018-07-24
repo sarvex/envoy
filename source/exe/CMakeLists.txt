@@ -43,7 +43,7 @@ add_executable(envoy
 target_link_libraries(
     envoy
     envoy_main_common_lib
-    config_http_zipkin_lib
+    #config_http_zipkin_lib
     xxhash.lib
     base64_lib
     hex_lib
@@ -96,7 +96,7 @@ target_link_libraries(
     admin_lib
     common_lib
     http_tracer_lib
-    zipkin_lib
+    #zipkin_lib
     access_log_formatter_lib
     http2_codec_lib
     http2_conn_pool_lib
@@ -164,7 +164,8 @@ target_link_libraries(
     http1_bridge_filter_lib
     http_ratelimit_lib
     ip_tagging_filter_lib
-    ratelimit_lib_filter
+	socket_option_factory_lib
+    #ratelimit_lib_filter
     health.lib                
     cares.lib
     event.lib
@@ -177,6 +178,11 @@ target_link_libraries(
     Rpcrt4.lib
     protoc-gen-validate.lib
     gogoproto.lib
+)
+
+target_link_libraries(envoy
+	debug fmtd.lib
+	optimized fmt.lib
 )
 
 target_link_libraries(envoy

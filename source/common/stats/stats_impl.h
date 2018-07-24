@@ -26,9 +26,7 @@
 
 #include "absl/strings/str_join.h"
 #include "absl/strings/string_view.h"
-#if !defined(_WIN32)
 #include "circllhist.h"
-#endif
 
 namespace Envoy {
 namespace Stats {

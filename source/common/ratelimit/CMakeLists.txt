@@ -1,6 +1,5 @@
 project(ratelimit)
 
-find_package(protobuf REQUIRED)
 include_directories(${Protobuf_INCLUDE_DIRS})
 include_directories(${CMAKE_BINARY_DIR}/source)
 protobuf_generate_cpp(PROTO_SRCS PROTO_HDRS ratelimit.proto)

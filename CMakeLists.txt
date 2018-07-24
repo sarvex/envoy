@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.5.0)
 set(CMAKE_TOOLCHAIN_FILE ${ENVOY_DEPENDENCIES_ROOT}/vcpkg/scripts/buildsystems/vcpkg.cmake)
 project(Envoy)
 
+set(Protobuf_PROTOC_EXECUTABLE ${ENVOY_DEPENDENCIES_ROOT}/vcpkg/installed/x64-windows-static/tools/protobuf/protoc.exe)
 find_package(Protobuf REQUIRED)
 
 

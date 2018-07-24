@@ -64,6 +64,26 @@ xcopy build_release\ssl\ssl.lib %PROTOC_OUTPUT%\lib /y
 xcopy build_release\crypto\crypto.lib %PROTOC_OUTPUT%\lib /y
 xcopy build_release\decrepit\decrepit.lib %PROTOC_OUTPUT%\lib /y
 
+:circllhist
+REM circllhist
+cd %ENVOY_DEPENDENCY_ROOT%
+set current_directory=circllhist
+if not exist %ENVOY_DEPENDENCY_ROOT%\%current_directory%\debug mkdir %ENVOY_DEPENDENCY_ROOT%\%current_directory%\debug
+if not exist %ENVOY_DEPENDENCY_ROOT%\%current_directory%\release mkdir %ENVOY_DEPENDENCY_ROOT%\%current_directory%\release
+if not exist %current_directory% (
+    git clone https://github.com/circonus-labs/libcircllhist.git %current_directory%
+)
+cd %current_directory%\src
+git fetch
+git checkout 5f48a3b549b047732f2d865a09e5aee872600854
+cl /nologo /c /DWIN32 /D_DEBUG circllhist.c /Fo:%ENVOY_DEPENDENCY_ROOT%\%current_directory%\debug\
+lib /nologo /out:%ENVOY_DEPENDENCY_ROOT%\%current_directory%\debug\%current_directory%.lib %ENVOY_DEPENDENCY_ROOT%\%current_directory%\debug\circllhist.obj
+cl /nologo /c /DWIN32 /DNDEBUG /Osx circllhist.c /Fo:%ENVOY_DEPENDENCY_ROOT%\%current_directory%\release\
+lib /nologo /out:%ENVOY_DEPENDENCY_ROOT%\%current_directory%\release\%current_directory%.lib %ENVOY_DEPENDENCY_ROOT%\%current_directory%\release\circllhist.obj
+xcopy %ENVOY_DEPENDENCY_ROOT%\%current_directory%\debug\%current_directory%.lib %ENVOY_DEPENDENCY_ROOT%\vcpkg\installed\x64-windows-static\debug\lib /y
+xcopy %ENVOY_DEPENDENCY_ROOT%\%current_directory%\release\%current_directory%.lib %ENVOY_DEPENDENCY_ROOT%\vcpkg\installed\x64-windows-static\lib /y
+xcopy %ENVOY_DEPENDENCY_ROOT%\%current_directory%\src\circllhist.h %ENVOY_DEPENDENCY_ROOT%\vcpkg\installed\x64-windows-static\include /y
+
 :prometheus
 REM prometheus
 cd %ENVOY_DEPENDENCY_ROOT%

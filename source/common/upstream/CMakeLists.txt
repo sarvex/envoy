@@ -22,7 +22,11 @@ target_link_libraries(cluster_manager_lib PUBLIC
     subset_lb_lib
 )
 
+add_library(health_checker_base_lib health_checker_base_impl.cc)
+
 add_library(health_checker_lib health_checker_impl.cc)
+target_link_libraries(health_checker_lib PUBLIC health_checker_base_lib)
+
 
 add_library(host_utility_lib host_utility.cc)
 
