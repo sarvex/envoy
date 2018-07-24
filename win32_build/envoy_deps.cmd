@@ -34,6 +34,8 @@ vcpkg install --triplet x64-windows-static abseil c-ares grpc http-parser libeve
 vcpkg install --triplet x64-windows nghttp2
 vcpkg install --triplet x64-windows fmt
 
+xcopy %ENVOY_DEPENDENCY_ROOT%\vcpkg\buildtrees\abseil\src\9a8c0641ad-f6c437fee1\absl\time\internal\cctz\include\* %ENVOY_DEPENDENCY_ROOT%\vcpkg\installed\x64-windows-static\include\absl\time\internal\cctz\include /i /y /s
+
 @echo on
 
 :boringssl
@@ -68,11 +70,11 @@ xcopy build_release\decrepit\decrepit.lib %PROTOC_OUTPUT%\lib /y
 REM circllhist
 cd %ENVOY_DEPENDENCY_ROOT%
 set current_directory=circllhist
-if not exist %ENVOY_DEPENDENCY_ROOT%\%current_directory%\debug mkdir %ENVOY_DEPENDENCY_ROOT%\%current_directory%\debug
-if not exist %ENVOY_DEPENDENCY_ROOT%\%current_directory%\release mkdir %ENVOY_DEPENDENCY_ROOT%\%current_directory%\release
 if not exist %current_directory% (
     git clone https://github.com/circonus-labs/libcircllhist.git %current_directory%
 )
+if not exist %ENVOY_DEPENDENCY_ROOT%\%current_directory%\debug mkdir %ENVOY_DEPENDENCY_ROOT%\%current_directory%\debug
+if not exist %ENVOY_DEPENDENCY_ROOT%\%current_directory%\release mkdir %ENVOY_DEPENDENCY_ROOT%\%current_directory%\release
 cd %current_directory%\src
 git fetch
 git checkout 5f48a3b549b047732f2d865a09e5aee872600854
@@ -243,10 +245,10 @@ if not exist %PROTOC_OUTPUT%\%current_directory%\release mkdir %PROTOC_OUTPUT%\%
 %PROTOC% %PROTOC_FLAGS% ^
     --proto_path=%ENVOY_DEPENDENCY_ROOT%\vcpkg\buildtrees\grpc\src\v1.12.0-73cc223062 ^
     %ENVOY_DEPENDENCY_ROOT%\vcpkg\buildtrees\grpc\src\v1.12.0-73cc223062\src\proto\grpc\health\v1\health.proto ^
-    --cpp_out=%PROTOC_OUTPUT%\%current_directory%
-cl /nologo /c /EHsc /I %PROTOC_OUTPUT%\%current_directory% /D_DEBUG %PROTOC_OUTPUT%\%current_directory%\health.pb.cc /Fo:%PROTOC_OUTPUT%\%current_directory%\debug\ /I %PROTOC_OUTPUT%\%current_directory%
+    --cpp_out=%PROTOC_OUTPUT%\health
+cl /nologo /c /EHsc /I %PROTOC_OUTPUT%\health /D_DEBUG %PROTOC_OUTPUT%\%current_directory%\health.pb.cc /Fo:%PROTOC_OUTPUT%\%current_directory%\debug\ /I %PROTOC_OUTPUT%\%current_directory%
 lib /nologo /out:%PROTOC_OUTPUT%\lib\debug\health.lib %PROTOC_OUTPUT%\%current_directory%\debug\health.pb.obj
-cl /nologo /c /EHsc /I %PROTOC_OUTPUT%\%current_directory% /DNDEBUG /Osx %PROTOC_OUTPUT%\%current_directory%\health.pb.cc /Fo:%PROTOC_OUTPUT%\%current_directory%\release\ /I %PROTOC_OUTPUT%\%current_directory%
+cl /nologo /c /EHsc /I %PROTOC_OUTPUT%\health /DNDEBUG /Osx %PROTOC_OUTPUT%\%current_directory%\health.pb.cc /Fo:%PROTOC_OUTPUT%\%current_directory%\release\ /I %PROTOC_OUTPUT%\%current_directory%
 lib /nologo /out:%PROTOC_OUTPUT%\lib\health.lib %PROTOC_OUTPUT%\%current_directory%\release\health.pb.obj
 
 endlocal

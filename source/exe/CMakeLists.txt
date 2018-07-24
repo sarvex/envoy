@@ -206,6 +206,7 @@ target_link_libraries(envoy
     debug absl_debuggingd.lib
     debug absl_numericd.lib
 	debug absl_synchronizationd.lib
+	debug absl_typesd.lib
 	debug absl_timed.lib
 )
 
