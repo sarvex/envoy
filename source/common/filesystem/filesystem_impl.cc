@@ -5,6 +5,7 @@
 #else
 #include <Windows.h>
 #include <fcntl.h>
+#include <filesystem>
 #endif
 #include <sys/stat.h>
 
@@ -80,12 +81,23 @@ std::string fileReadToEnd(const std::string& path) {
 
 std::string canonicalPath(const std::string& path) {
   // TODO(htuch): When we are using C++17, switch to std::filesystem::canonical.
+#if defined(_WIN32)
+	std::error_code code;
+	auto resolved_path = std::experimental::filesystem::canonical(std::experimental::filesystem::path(path), code);
+	if (code.value() != ERROR_SUCCESS)
+	{
+		throw EnvoyException(fmt::format("Unable to determine canonical path for {}", path));
+	}
+	std::string resolved_path_string{ resolved_path.string() };
+#else
   char* resolved_path = ::realpath(path.c_str(), nullptr);
   if (resolved_path == nullptr) {
-    throw EnvoyException(fmt::format("Unable to determine canonical path for {}", path));
+	  throw EnvoyException(fmt::format("Unable to determine canonical path for {}", path));
   }
-  std::string resolved_path_string{resolved_path};
+  std::string resolved_path_string{ resolved_path };
   free(resolved_path);
+#endif
+
   return resolved_path_string;
 }
 

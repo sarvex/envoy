@@ -80,7 +80,7 @@ HealthCheckerFactory::create(const envoy::api::v2::core::HealthCheck& hc_config,
 const std::chrono::milliseconds HealthCheckerImplBase::NO_TRAFFIC_INTERVAL{60000};
 
 HealthCheckerImplBase::HealthCheckerImplBase(const Cluster& cluster,
-                                             const envoy::api::v2::HealthCheck& config,
+                                             const envoy::api::v2::core::HealthCheck& config,
                                              Event::Dispatcher& dispatcher,
                                              Runtime::Loader& runtime,
                                              Runtime::RandomGenerator& random)

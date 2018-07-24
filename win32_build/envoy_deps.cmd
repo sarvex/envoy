@@ -216,16 +216,16 @@ lib /nologo /out:%PROTOC_OUTPUT%\lib\%current_directory%.lib @lib_release.rsp
 :health
 REM health
 cd %ENVOY_DEPENDENCY_ROOT%
-set current_directory=health
+set current_directory=health\src\proto\grpc\health\v1
 if not exist %PROTOC_OUTPUT%\%current_directory%\debug mkdir %PROTOC_OUTPUT%\%current_directory%\debug
 if not exist %PROTOC_OUTPUT%\%current_directory%\release mkdir %PROTOC_OUTPUT%\%current_directory%\release
 %PROTOC% %PROTOC_FLAGS% ^
-    --proto_path=%ENVOY_DEPENDENCY_ROOT%\vcpkg\buildtrees\grpc\src\v1.12.0-73cc223062\src\proto\grpc\health\v1 ^
+    --proto_path=%ENVOY_DEPENDENCY_ROOT%\vcpkg\buildtrees\grpc\src\v1.12.0-73cc223062 ^
     %ENVOY_DEPENDENCY_ROOT%\vcpkg\buildtrees\grpc\src\v1.12.0-73cc223062\src\proto\grpc\health\v1\health.proto ^
     --cpp_out=%PROTOC_OUTPUT%\%current_directory%
 cl /nologo /c /EHsc /I %PROTOC_OUTPUT%\%current_directory% /D_DEBUG %PROTOC_OUTPUT%\%current_directory%\health.pb.cc /Fo:%PROTOC_OUTPUT%\%current_directory%\debug\ /I %PROTOC_OUTPUT%\%current_directory%
-lib /nologo /out:%PROTOC_OUTPUT%\lib\debug\%current_directory%.lib %PROTOC_OUTPUT%\%current_directory%\debug\health.pb.obj
+lib /nologo /out:%PROTOC_OUTPUT%\lib\debug\health.lib %PROTOC_OUTPUT%\%current_directory%\debug\health.pb.obj
 cl /nologo /c /EHsc /I %PROTOC_OUTPUT%\%current_directory% /DNDEBUG /Osx %PROTOC_OUTPUT%\%current_directory%\health.pb.cc /Fo:%PROTOC_OUTPUT%\%current_directory%\release\ /I %PROTOC_OUTPUT%\%current_directory%
-lib /nologo /out:%PROTOC_OUTPUT%\lib\%current_directory%.lib %PROTOC_OUTPUT%\%current_directory%\release\health.pb.obj
+lib /nologo /out:%PROTOC_OUTPUT%\lib\health.lib %PROTOC_OUTPUT%\%current_directory%\release\health.pb.obj
 
 endlocal

@@ -2,6 +2,8 @@
 
 #if !defined(DISABLE_PROTO_VALIDATE)
 #include "envoy/config/filter/network/tcp_proxy/v2/tcp_proxy.pb.validate.h"
+#else
+#include "envoy/config/filter/network/tcp_proxy/v2/tcp_proxy.pb.h"
 #endif
 #include "envoy/server/filter_config.h"
 

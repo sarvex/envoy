@@ -7,7 +7,10 @@
 #include <string>
 #include <unordered_set>
 
+#if !defined(_WIN32)
 #include "envoy/config/bootstrap/v2//bootstrap.pb.validate.h"
+#endif
+
 #include "envoy/config/bootstrap/v2/bootstrap.pb.h"
 #include "envoy/event/dispatcher.h"
 #include "envoy/event/signal.h"

@@ -1,6 +1,8 @@
 #pragma once
 #if !defined(DISABLE_PROTO_VALIDATE)
 #include "envoy/config/filter/network/client_ssl_auth/v2/client_ssl_auth.pb.validate.h"
+#else
+#include "envoy/config/filter/network/client_ssl_auth/v2/client_ssl_auth.pb.h"
 #endif
 #include "envoy/server/filter_config.h"
 

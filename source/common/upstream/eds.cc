@@ -1,6 +1,9 @@
 #include "common/upstream/eds.h"
 
+#if !defined(_WIN32)
 #include "envoy/api/v2/eds.pb.validate.h"
+#endif
+
 #include "envoy/common/exception.h"
 
 #include "common/common/fmt.h"

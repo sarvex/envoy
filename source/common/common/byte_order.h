@@ -11,6 +11,13 @@
 #define le32toh(x) OSSwapLittleToHostInt32((x))
 #define le64toh(x) OSSwapLittleToHostInt64((x))
 
+#elif defined(_WIN32)
+
+#define htole32(x) x
+#define htole64(x) x
+#define le32toh(x) x
+#define le64toh(x) x
+
 #else
 
 #include <endian.h>

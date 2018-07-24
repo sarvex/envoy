@@ -1,7 +1,9 @@
 #include "server/config_validation/server.h"
 
 #include "envoy/config/bootstrap/v2/bootstrap.pb.h"
+#if !defined(_WIN32)
 #include "envoy/config/bootstrap/v2/bootstrap.pb.validate.h"
+#endif
 
 #include "common/common/version.h"
 #include "common/config/bootstrap_json.h"

@@ -27,7 +27,9 @@ public:
                            std::vector<Tag>&& tags);
   ~ThreadLocalHistogramImpl();
 
+#if !defined(_WIN32)
   void merge(histogram_t* target);
+#endif
 
   /**
    * Called in the beginning of merge process. Swaps the histogram used for collection so that we do

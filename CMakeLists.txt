@@ -9,7 +9,7 @@ add_definitions(-DNOMINMAX)
 add_definitions(-DXXH_STATIC_LINKING_ONLY)
 add_definitions(-DCARES_STATICLIB)
 add_definitions(-DDISABLE_PROTO_VALIDATE)
-
+set(CMAKE_CXX_FLAGS  "${CMAKE_CXX_FLAGS} -wd4250")
 
 include_directories(${ENVOY_DEPENDENCIES_ROOT}/gens)
 include_directories(${ENVOY_DEPENDENCIES_ROOT}/vcpkg/installed/x64-windows-static/include)
@@ -23,7 +23,8 @@ include_directories(${ENVOY_DEPENDENCIES_ROOT}/gens/googleapis)
 include_directories(${ENVOY_DEPENDENCIES_ROOT}/gens/protoc-gen-validate)
 include_directories(${ENVOY_DEPENDENCIES_ROOT}/gens/gogoproto)
 include_directories(${ENVOY_DEPENDENCIES_ROOT}/gens/opencensus-proto)
-include_directories(${ENVOY_DEPENDENCIES_ROOT}/gens/prometheus)
+include_directories(${ENVOY_DEPENDENCIES_ROOT}/gens)
+include_directories(${ENVOY_DEPENDENCIES_ROOT}/gens/health)
 
 SET(CMAKE_EXE_LINKER_FLAGS_DEBUG "${CMAKE_EXE_LINKER_FLAGS_DEBUG} /LIBPATH:${ENVOY_DEPENDENCIES_ROOT}/gens/lib/debug")
 SET(CMAKE_EXE_LINKER_FLAGS_DEBUG "${CMAKE_EXE_LINKER_FLAGS_DEBUG} /LIBPATH:${ENVOY_DEPENDENCIES_ROOT}/vcpkg/installed/x64-windows-static/debug/lib")

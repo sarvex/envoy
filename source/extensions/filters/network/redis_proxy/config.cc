@@ -3,7 +3,10 @@
 #include <memory>
 #include <string>
 
+#if !defined(_WIN32)
 #include "envoy/config/filter/network/redis_proxy/v2/redis_proxy.pb.validate.h"
+#endif
+
 #include "envoy/registry/registry.h"
 
 #include "common/config/filter_json.h"
