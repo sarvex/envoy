@@ -195,9 +195,7 @@ cd %ENVOY_DEPENDENCY_ROOT%
 set current_directory=data-plane-api
 if not exist %PROTOC_OUTPUT%\%current_directory%\debug mkdir %PROTOC_OUTPUT%\%current_directory%\debug
 if not exist %PROTOC_OUTPUT%\%current_directory%\release mkdir %PROTOC_OUTPUT%\%current_directory%\release
-if not exist %current_directory% (
-    git clone https://github.com/envoyproxy/data-plane-api.git
-)
+
 cd %ENVOY_REPO_ROOT%\api
 for /R %%i in (*.proto) do (
     %PROTOC% %PROTOC_FLAGS% ^
