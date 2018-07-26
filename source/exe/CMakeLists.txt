@@ -42,6 +42,7 @@ add_executable(envoy
     
 target_link_libraries(
     envoy
+    googleapis.lib
     envoy_main_common_lib
     #config_http_zipkin_lib
     xxhash.lib
@@ -188,7 +189,6 @@ target_link_libraries(
     nghttp2.lib
     Ws2_32.lib
     http_parser.lib
-    googleapis.lib
     Rpcrt4.lib
     protoc-gen-validate.lib
     gogoproto.lib
