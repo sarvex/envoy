@@ -52,7 +52,11 @@ void validateIpv6Supported(const std::string& address) {
 bool ipFamilySupported(int domain) {
   const int fd = ::socket(domain, SOCK_STREAM, 0);
   if (fd >= 0) {
+#if !defined(_WIN32)
     RELEASE_ASSERT(::close(fd) == 0, "");
+#else
+	RELEASE_ASSERT(::closesocket(fd) == 0, "");
+#endif
   }
   return fd != -1;
 }
