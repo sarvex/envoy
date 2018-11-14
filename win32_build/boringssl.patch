@@ -1,9 +1,9 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 46a8465a..ee0d23f9 100644
+index c614a65a..72337297 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -340,6 +340,18 @@ else()
-   message(FATAL_ERROR "Unknown processor:" ${CMAKE_SYSTEM_PROCESSOR})
+@@ -452,6 +452,21 @@ if(USE_CUSTOM_LIBCXX)
+   target_link_libraries(libcxx libcxxabi)
  endif()
  
 +if (MSVC)
@@ -15,9 +15,12 @@ index 46a8465a..ee0d23f9 100644
 +    if(${flag_var} MATCHES "/MD")
 +      string(REGEX REPLACE "/MD" "/MT" ${flag_var} "${${flag_var}}")
 +    endif(${flag_var} MATCHES "/MD")
++    if(${flag_var} MATCHES "/MDd")
++      string(REGEX REPLACE "/MDd" "/MTd" ${flag_var} "${${flag_var}}")
++    endif(${flag_var} MATCHES "/MDd")
 +  endforeach(flag_var)
 +endif (MSVC)
 +
- if (ANDROID AND NOT ANDROID_NDK_REVISION AND ${ARCH} STREQUAL "arm")
-   # The third-party Android-NDK CMake files somehow fail to set the -march flag
-   # for assembly files. Without this flag, the compiler believes that it's
+ # Add minimal googletest targets. The provided one has many side-effects, and
+ # googletest has a very straightforward build.
+ add_library(boringssl_gtest third_party/googletest/src/gtest-all.cc)

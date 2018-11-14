@@ -30,7 +30,7 @@ namespace {
 bool ipFamilySupported(int domain) {
   const int fd = ::socket(domain, SOCK_STREAM, 0);
   if (fd >= 0) {
-    RELEASE_ASSERT(::close(fd) == 0);
+    RELEASE_ASSERT(::closesocket(fd) == 0);
   }
   return fd != -1;
 }

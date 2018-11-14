@@ -1,1 +1,2 @@
-add_library(network_client_ssl_auth_lib client_ssl_auth.cc config.cc)
+add_library(config_client_ssl_auth_lib OBJECT config.cc)
+add_library(network_client_ssl_auth_lib client_ssl_auth.cc)

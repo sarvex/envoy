@@ -69,6 +69,7 @@ public:
   std::string nextProtocol() const override { return transport_socket_->protocol(); }
   void noDelay(bool enable) override;
   void readDisable(bool disable) override;
+  void writeDisable(bool disable) override;
   void detectEarlyCloseWhenReadDisabled(bool value) override { detect_early_close_ = value; }
   bool readEnabled() const override;
   const Address::InstanceConstSharedPtr& remoteAddress() const override {
@@ -153,6 +154,7 @@ private:
   std::list<ConnectionCallbacks*> callbacks_;
   std::list<BytesSentCb> bytes_sent_callbacks_;
   bool read_enabled_{true};
+  bool write_enabled_{true};
   bool close_with_flush_{false};
   bool above_high_watermark_{false};
   bool detect_early_close_{true};

@@ -1,6 +1,10 @@
 #include "extensions/access_loggers/file/config.h"
 
+#if !defined(DISABLE_PROTO_VALIDATE)
 #include "envoy/config/filter/accesslog/v2/accesslog.pb.validate.h"
+#else
+#include "envoy/config/filter/accesslog/v2/accesslog.pb.h"
+#endif
 #include "envoy/registry/registry.h"
 #include "envoy/server/filter_config.h"
 

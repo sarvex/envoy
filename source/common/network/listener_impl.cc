@@ -53,6 +53,7 @@ ListenerImpl::ListenerImpl(Event::DispatcherImpl& dispatcher, Socket& socket, Li
       hand_off_restored_destination_connections_(hand_off_restored_destination_connections),
       listener_(nullptr) {
   const auto ip = socket.localAddress()->ip();
+  const auto addressString = socket.localAddress()->asString();
 
   // Only use the listen socket's local address for new connections if it is not the all hosts
   // address (e.g., 0.0.0.0 for IPv4).

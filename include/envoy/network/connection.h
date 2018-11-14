@@ -143,6 +143,12 @@ public:
   virtual void readDisable(bool disable) PURE;
 
   /**
+   * Disable socket write on the connection for level triggered implementations.
+   * @param disable supplies TRUE is reads should be disabled, FALSE if they should be enabled.
+   */
+  virtual void writeDisable(bool disable) PURE;
+
+  /**
    * Set if Envoy should detect TCP connection close when readDisable(true) is called.
    * By default, this is true on newly created connections.
    *

@@ -1,1 +1,1 @@
-add_library(network_http_connection_manager config.cc)
+add_library(config_http_connection_manager OBJECT config.cc)

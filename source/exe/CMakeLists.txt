@@ -8,19 +8,18 @@ add_library(envoy_main_common_lib main_common.cc
 target_link_libraries(envoy_main_common_lib PUBLIC
     libevent_lib
     network_utility_lib
-    stats_lib 
+    stats_lib
     thread_local_store_lib
     drain_manager_lib
     options_lib
     server_lib
     config_http_fault_lib
     config_http_grpc_http1_bridge_lib
-    config_http_grpc_web_lib    
+    config_http_grpc_web_lib
     config_http_ip_tagging_lib
     config_http_ratelimit_lib
     network_client_ssl_auth_lib
-    network_echo_lib  
-    network_http_connection_manager
+    network_echo_lib
     network_mongo_proxy_lib
     network_ratelimit_lib
     network_redis_proxy_lib
@@ -34,12 +33,16 @@ target_link_libraries(envoy_main_common_lib PUBLIC
 
 add_executable(envoy
     main.cc
-    $<TARGET_OBJECTS:config_http_buffer_lib>
-    $<TARGET_OBJECTS:config_http_router_lib>
     $<TARGET_OBJECTS:config_network_raw_buffer_lib>
     $<TARGET_OBJECTS:config_network_tcp_proxy_lib>
-) 
-    
+    $<TARGET_OBJECTS:config_http_connection_manager>
+    $<TARGET_OBJECTS:config_http_buffer_lib>
+    $<TARGET_OBJECTS:config_http_router_lib>
+    $<TARGET_OBJECTS:config_file_access_log_lib>
+    $<TARGET_OBJECTS:config_client_ssl_auth_lib>
+
+)
+
 target_link_libraries(
     envoy
     envoy_main_common_lib
@@ -74,7 +77,7 @@ target_link_libraries(
     watchdog_lib
     worker_lib
 	proto_descriptors_lib
-    
+
     buffer_filter_lib
     config_lib_router
     config_utility_lib_router
@@ -157,7 +160,7 @@ target_link_libraries(
     singleton_manager_lib
     listener_lib
     access_log_lib
-    common_html_utility 
+    common_html_utility
     common_request_info_utility
     common_grpc_async_client_manager_lib
     common_ssl_ssl_socket_lib
@@ -171,8 +174,8 @@ target_link_libraries(
     ip_tagging_filter_lib
 	socket_option_factory_lib
     #ratelimit_lib_filter
-	ext_file_access_log_lib
-    health.lib                
+	extension_file_access_log_lib
+    health.lib
     cares.lib
     event.lib
     event_core.lib
@@ -200,7 +203,7 @@ target_link_libraries(envoy
     optimized libprotoc.lib
 )
 
-target_link_libraries(envoy 
+target_link_libraries(envoy
     debug absl_based.lib
     debug absl_stringsd.lib
     debug absl_debuggingd.lib
@@ -210,7 +213,7 @@ target_link_libraries(envoy
 	debug absl_timed.lib
 )
 
-target_link_libraries(envoy 
+target_link_libraries(envoy
     optimized absl_base.lib
     optimized absl_debugging.lib
     optimized absl_numeric.lib
@@ -220,18 +223,18 @@ target_link_libraries(envoy
 	optimized absl_time.lib
 )
 
-target_link_libraries(envoy 
+target_link_libraries(envoy
     crypto.lib
     decrepit.lib
     ssl.lib
 )
 
-target_link_libraries(envoy 
+target_link_libraries(envoy
     debug libyaml-cppmdd.lib
     optimized libyaml-cppmd.lib
 )
 
 
-target_link_libraries(envoy 
+target_link_libraries(envoy
     data-plane-api.lib
 )

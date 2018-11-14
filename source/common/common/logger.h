@@ -151,6 +151,12 @@ public:
    */
   bool hasLock() const { return stderr_sink_->hasLock(); }
 
+  void set_pattern(const std::string& ) override {
+  }
+
+  void set_formatter(std::unique_ptr<spdlog::formatter> ) override {
+  }
+
   // Constructs a new DelegatingLogSink, sets up the default sink to stderr,
   // and returns a shared_ptr to it. A shared_ptr is required for sinks used
   // in spdlog::logger; it would not otherwise be required in Envoy. This method
