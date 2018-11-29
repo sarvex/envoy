@@ -51,24 +51,31 @@ IoResult RawBufferSocket::doRead(Buffer::Instance& buffer) {
 }
 
 IoResult RawBufferSocket::doWrite(Buffer::Instance& buffer, bool end_stream) {
+
+  // unset FileReadyType::Write to avoid getting notified since we will explicitly write until
+  // we get EGAIN/EWOULDBLOCK
+  callbacks_->unsetFileReadyType(Event::FileReadyType::Write);
+
   PostIoAction action;
   uint64_t bytes_written = 0;
   ASSERT(!shutdown_ || buffer.length() == 0);
   do {
     if (buffer.length() == 0) {
       if (end_stream && !shutdown_) {
-      // Ignore the result. This can only fail if the connection failed. In that case, the
-      // error will be detected on the next read, and dealt with appropriately.
+        // Ignore the result. This can only fail if the connection failed. In that case, the
+        // error will be detected on the next read, and dealt with appropriately.
 #if !defined(WIN32)
         ::shutdown(callbacks_->fd(), SHUT_WR);
 #else
         ::shutdown(callbacks_->fd(), SD_SEND);
 #endif
         shutdown_ = true;
-      }
+      } 
+
       action = PostIoAction::KeepOpen;
       break;
     }
+
     int rc = buffer.write(callbacks_->fd());
     ENVOY_CONN_LOG(trace, "write returns: {}", callbacks_->connection(), rc);
     if (rc == -1) {
@@ -77,6 +84,7 @@ IoResult RawBufferSocket::doWrite(Buffer::Instance& buffer, bool end_stream) {
                      strerror(errorno));
       if (errorno == EAGAIN || errorno == EWOULDBLOCK) {
         action = PostIoAction::KeepOpen;
+        callbacks_->updateFileReadyType(Event::FileReadyType::Write);
       } else {
         action = PostIoAction::Close;
       }

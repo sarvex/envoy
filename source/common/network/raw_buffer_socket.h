@@ -2,7 +2,7 @@
 
 #include "envoy/buffer/buffer.h"
 #include "envoy/network/transport_socket.h"
-
+#include "envoy/event/file_event.h"
 #include "common/common/logger.h"
 
 namespace Envoy {
