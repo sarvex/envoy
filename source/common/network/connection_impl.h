@@ -112,6 +112,24 @@ public:
   // Reconsider how to make fairness happen.
   void setReadBufferReady() override { file_event_->activate(Event::FileReadyType::Read); }
 
+  void SaveFileReadyType(uint32_t type) {
+    std::unique_lock<std::mutex> lock(file_event_mutex_);
+    file_ready_type_ = type;
+    file_event_->setEnabled(file_ready_type_);
+  }
+
+  void updateFileReadyType(uint32_t type) override {
+    std::unique_lock<std::mutex> lock(file_event_mutex_);
+    file_ready_type_ |= type;
+    file_event_->setEnabled(file_ready_type_);
+  }
+
+  void unsetFileReadyType(uint32_t type) override {
+    std::unique_lock<std::mutex> lock(file_event_mutex_);
+    file_ready_type_ &= ~type;
+    file_event_->setEnabled(file_ready_type_);
+  }
+
   // Obtain global next connection ID. This should only be used in tests.
   static uint64_t nextGlobalIdForTest() { return next_global_id_; }
 
@@ -135,6 +153,8 @@ protected:
   ConnectionEvent immediate_error_event_{ConnectionEvent::Connected};
   bool bind_error_{false};
   Event::FileEventPtr file_event_;
+  uint32_t file_ready_type_;
+  std::mutex file_event_mutex_;
 
 private:
   void onFileEvent(uint32_t events);

@@ -61,6 +61,7 @@ ConnectionImpl::ConnectionImpl(Event::Dispatcher& dispatcher, ConnectionSocketPt
     connecting_ = true;
   }
 
+  file_ready_type_ = Event::FileReadyType::Read | Event::FileReadyType::Write;
   // We never ask for both early close and read at the same time. If we are reading, we want to
   // consume all available data.
   file_event_ = dispatcher_.createFileEvent(
@@ -70,8 +71,8 @@ ConnectionImpl::ConnectionImpl(Event::Dispatcher& dispatcher, ConnectionSocketPt
 #else
       Event::FileTriggerType::Level,
 #endif
-      Event::FileReadyType::Read | Event::FileReadyType::Write);
-
+   file_ready_type_);
+ 
   transport_socket_->setTransportSocketCallbacks(*this);
 }
 
@@ -118,7 +119,7 @@ void ConnectionImpl::close(ConnectionCloseType type) {
     ASSERT(type == ConnectionCloseType::FlushWrite);
     close_with_flush_ = true;
     read_enabled_ = false;
-    file_event_->setEnabled(Event::FileReadyType::Write |
+    SaveFileReadyType(Event::FileReadyType::Write |
                             (enable_half_close_ ? 0 : Event::FileReadyType::Closed));
   }
 }
@@ -262,9 +263,10 @@ void ConnectionImpl::readDisable(bool disable) {
     // If half-close semantics are enabled, we never want early close notifications; we
     // always want to read all avaiable data, even if the other side has closed.
     if (detect_early_close_ && !enable_half_close_) {
-      file_event_->setEnabled(Event::FileReadyType::Write | Event::FileReadyType::Closed);
+      SaveFileReadyType(Event::FileReadyType::Write |
+                              Event::FileReadyType::Closed);
     } else {
-      file_event_->setEnabled(Event::FileReadyType::Write);
+      SaveFileReadyType(Event::FileReadyType::Write);
     }
   } else {
     if (read_disable_count_ > 0) {
@@ -275,7 +277,8 @@ void ConnectionImpl::readDisable(bool disable) {
     read_enabled_ = true;
     // We never ask for both early close and read at the same time. If we are reading, we want to
     // consume all available data.
-    file_event_->setEnabled(Event::FileReadyType::Read | Event::FileReadyType::Write);
+    SaveFileReadyType(Event::FileReadyType::Read |
+                            Event::FileReadyType::Write);
     // If the connection has data buffered there's no guarantee there's also data in the kernel
     // which will kick off the filter chain. Instead fake an event to make sure the buffered data
     // gets processed regardless.

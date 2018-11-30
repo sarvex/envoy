@@ -71,6 +71,9 @@ public:
    * @param event supplies the connection event
    */
   virtual void raiseEvent(ConnectionEvent event) PURE;
+
+  virtual void unsetFileReadyType(uint32_t type) PURE;
+  virtual void updateFileReadyType(uint32_t type) PURE;
 };
 
 /**
