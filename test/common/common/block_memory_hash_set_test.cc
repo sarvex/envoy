@@ -4,12 +4,10 @@
 #include <memory>
 #include <string>
 
-#include "envoy/stats/stats.h"
-
 #include "common/common/block_memory_hash_set.h"
 #include "common/common/fmt.h"
 #include "common/common/hash.h"
-#include "common/stats/stats_impl.h"
+#include "common/stats/stats_options_impl.h"
 
 #include "absl/strings/string_view.h"
 #include "gtest/gtest.h"
@@ -22,10 +20,10 @@ protected:
   // TestValue that doesn't define a hash.
   struct TestValueBase {
     absl::string_view key() const { return name; }
-    void truncateAndInit(absl::string_view key, const Stats::StatsOptions& stats_options) {
-      uint64_t xfer = std::min(stats_options.maxNameLength(), key.size());
-      memcpy(name, key.data(), xfer);
-      name[xfer] = '\0';
+    void initialize(absl::string_view key, const Stats::StatsOptions& stats_options) {
+      ASSERT(key.size() <= stats_options.maxNameLength());
+      memcpy(name, key.data(), key.size());
+      name[key.size()] = '\0';
     }
     static uint64_t structSizeWithOptions(const Stats::StatsOptions& stats_options) {
       UNREFERENCED_PARAMETER(stats_options);
@@ -53,7 +51,7 @@ protected:
     hash_set_options_.num_slots = 5;
     const uint32_t mem_size =
         BlockMemoryHashSet<TestValueClass>::numBytes(hash_set_options_, stats_options_);
-    memory_.reset(new uint8_t[mem_size]);
+    memory_ = std::make_unique<uint8_t[]>(mem_size);
     memset(memory_.get(), 0, mem_size);
   }
 
@@ -206,7 +204,9 @@ TEST_F(BlockMemoryHashSetTest, severalKeysZeroHash) {
   hash_set1.sanityCheck();
 }
 
-TEST_F(BlockMemoryHashSetTest, sanityCheckZeroedMemoryDeathTest) {
+class BlockMemoryHashSetDeathTest : public BlockMemoryHashSetTest {};
+
+TEST_F(BlockMemoryHashSetDeathTest, sanityCheckZeroedMemoryDeathTest) {
   setUp<TestValueZeroHash>();
   BlockMemoryHashSet<TestValueZeroHash> hash_set1(hash_set_options_, true, memory_.get(),
                                                   stats_options_);

@@ -18,8 +18,7 @@ namespace ThriftProxy {
 const uint16_t CompactProtocolImpl::Magic = 0x8201;
 const uint16_t CompactProtocolImpl::MagicMask = 0xFF1F;
 
-bool CompactProtocolImpl::readMessageBegin(Buffer::Instance& buffer, std::string& name,
-                                           MessageType& msg_type, int32_t& seq_id) {
+bool CompactProtocolImpl::readMessageBegin(Buffer::Instance& buffer, MessageMetadata& metadata) {
   // Minimum message length:
   //   protocol, message type, and version: 2 bytes +
   //   seq id (var int): 1 byte +
@@ -29,7 +28,7 @@ bool CompactProtocolImpl::readMessageBegin(Buffer::Instance& buffer, std::string
     return false;
   }
 
-  uint16_t version = BufferHelper::peekU16(buffer);
+  uint16_t version = buffer.peekBEInt<uint16_t>();
   if ((version & MagicMask) != Magic) {
     throw EnvoyException(fmt::format("invalid compact protocol version 0x{:04x} != 0x{:04x}",
                                      version & MagicMask, Magic));
@@ -64,21 +63,20 @@ bool CompactProtocolImpl::readMessageBegin(Buffer::Instance& buffer, std::string
   buffer.drain(id_size + name_len_size + 2);
 
   if (name_len > 0) {
-    name.assign(std::string(static_cast<char*>(buffer.linearize(name_len)), name_len));
+    metadata.setMethodName(
+        std::string(static_cast<const char*>(buffer.linearize(name_len)), name_len));
     buffer.drain(name_len);
   } else {
-    name.clear();
+    metadata.setMethodName("");
   }
-  msg_type = type;
-  seq_id = id;
+  metadata.setMessageType(type);
+  metadata.setSequenceId(id);
 
-  onMessageStart(absl::string_view(name), msg_type, seq_id);
   return true;
 }
 
 bool CompactProtocolImpl::readMessageEnd(Buffer::Instance& buffer) {
   UNREFERENCED_PARAMETER(buffer);
-  onMessageComplete();
   return true;
 }
 
@@ -91,7 +89,6 @@ bool CompactProtocolImpl::readStructBegin(Buffer::Instance& buffer, std::string&
   last_field_id_stack_.push(last_field_id_);
   last_field_id_ = 0;
 
-  onStructBegin(absl::string_view(name));
   return true;
 }
 
@@ -105,7 +102,6 @@ bool CompactProtocolImpl::readStructEnd(Buffer::Instance& buffer) {
   last_field_id_ = last_field_id_stack_.top();
   last_field_id_stack_.pop();
 
-  onStructEnd();
   return true;
 }
 
@@ -116,7 +112,7 @@ bool CompactProtocolImpl::readFieldBegin(Buffer::Instance& buffer, std::string& 
     return false;
   }
 
-  uint8_t delta_and_type = BufferHelper::peekI8(buffer);
+  uint8_t delta_and_type = buffer.peekInt<int8_t>();
   if ((delta_and_type & 0x0f) == 0) {
     // Type is stop, no need to do further decoding.
     name.clear();
@@ -124,7 +120,6 @@ bool CompactProtocolImpl::readFieldBegin(Buffer::Instance& buffer, std::string& 
     field_type = FieldType::Stop;
     buffer.drain(1);
 
-    onStructField(absl::string_view(name), field_type, field_id);
     return true;
   }
 
@@ -166,7 +161,6 @@ bool CompactProtocolImpl::readFieldBegin(Buffer::Instance& buffer, std::string& 
 
   buffer.drain(id_size + 1);
 
-  onStructField(absl::string_view(name), field_type, field_id);
   return true;
 }
 
@@ -200,7 +194,7 @@ bool CompactProtocolImpl::readMapBegin(Buffer::Instance& buffer, FieldType& key_
     return false;
   }
 
-  uint8_t types = BufferHelper::peekI8(buffer, s_size);
+  uint8_t types = buffer.peekInt<int8_t>(s_size);
   FieldType ktype = convertCompactFieldType(static_cast<CompactFieldType>(types >> 4));
   FieldType vtype = convertCompactFieldType(static_cast<CompactFieldType>(types & 0xF));
 
@@ -229,7 +223,7 @@ bool CompactProtocolImpl::readListBegin(Buffer::Instance& buffer, FieldType& ele
 
   uint32_t sz = 0;
   int s_size = 0;
-  uint8_t size_and_type = BufferHelper::peekI8(buffer);
+  uint8_t size_and_type = buffer.peekInt<int8_t>();
   if ((size_and_type & 0xF0) != 0xF0) {
     // Short form list header: size and type byte.
     sz = static_cast<uint32_t>(size_and_type >> 4);
@@ -241,7 +235,7 @@ bool CompactProtocolImpl::readListBegin(Buffer::Instance& buffer, FieldType& ele
     }
 
     if (s < 0) {
-      throw EnvoyException(fmt::format("negative compact procotol list/set size {}", s));
+      throw EnvoyException(fmt::format("negative compact protocol list/set size {}", s));
     }
 
     sz = static_cast<uint32_t>(s);
@@ -278,7 +272,7 @@ bool CompactProtocolImpl::readBool(Buffer::Instance& buffer, bool& value) {
     return false;
   }
 
-  value = BufferHelper::drainI8(buffer) != 0;
+  value = buffer.drainInt<int8_t>() != 0;
   return true;
 }
 
@@ -286,7 +280,7 @@ bool CompactProtocolImpl::readByte(Buffer::Instance& buffer, uint8_t& value) {
   if (buffer.length() < 1) {
     return false;
   }
-  value = BufferHelper::drainI8(buffer);
+  value = buffer.drainInt<int8_t>();
   return true;
 }
 
@@ -349,7 +343,7 @@ bool CompactProtocolImpl::readDouble(Buffer::Instance& buffer, double& value) {
     return false;
   }
 
-  value = BufferHelper::drainDouble(buffer);
+  value = BufferHelper::drainBEDouble(buffer);
   return true;
 }
 
@@ -379,7 +373,7 @@ bool CompactProtocolImpl::readString(Buffer::Instance& buffer, std::string& valu
   }
 
   buffer.drain(len_size);
-  value.assign(static_cast<char*>(buffer.linearize(str_len)), str_len);
+  value.assign(static_cast<const char*>(buffer.linearize(str_len)), str_len);
   buffer.drain(str_len);
   return true;
 }
@@ -388,17 +382,17 @@ bool CompactProtocolImpl::readBinary(Buffer::Instance& buffer, std::string& valu
   return readString(buffer, value);
 }
 
-void CompactProtocolImpl::writeMessageBegin(Buffer::Instance& buffer, const std::string& name,
-                                            MessageType msg_type, int32_t seq_id) {
-  UNREFERENCED_PARAMETER(name);
+void CompactProtocolImpl::writeMessageBegin(Buffer::Instance& buffer,
+                                            const MessageMetadata& metadata) {
+  MessageType msg_type = metadata.messageType();
 
   uint16_t ptv = (Magic & MagicMask) | (static_cast<uint16_t>(msg_type) << 5);
   ASSERT((ptv & MagicMask) == Magic);
   ASSERT((ptv & ~MagicMask) >> 5 == static_cast<uint16_t>(msg_type));
 
-  BufferHelper::writeU16(buffer, ptv);
-  BufferHelper::writeVarIntI32(buffer, seq_id);
-  writeString(buffer, name);
+  buffer.writeBEInt<uint16_t>(ptv);
+  BufferHelper::writeVarIntI32(buffer, metadata.sequenceId());
+  writeString(buffer, metadata.methodName());
 }
 
 void CompactProtocolImpl::writeMessageEnd(Buffer::Instance& buffer) {
@@ -431,7 +425,7 @@ void CompactProtocolImpl::writeFieldBegin(Buffer::Instance& buffer, const std::s
   UNREFERENCED_PARAMETER(name);
 
   if (field_type == FieldType::Stop) {
-    BufferHelper::writeI8(buffer, 0);
+    buffer.writeByte(0);
     return;
   }
 
@@ -455,11 +449,11 @@ void CompactProtocolImpl::writeFieldBeginInternal(
 
   if (field_id > last_field_id_ && field_id - last_field_id_ <= 15) {
     // Encode short-form field header.
-    BufferHelper::writeI8(buffer, (static_cast<int8_t>(field_id - last_field_id_) << 4) |
-                                      static_cast<int8_t>(compact_field_type));
+    buffer.writeByte((static_cast<int8_t>(field_id - last_field_id_) << 4) |
+                     static_cast<int8_t>(compact_field_type));
   } else {
-    BufferHelper::writeI8(buffer, static_cast<int8_t>(compact_field_type));
-    BufferHelper::writeI16(buffer, field_id);
+    buffer.writeByte(static_cast<int8_t>(compact_field_type));
+    BufferHelper::writeZigZagI32(buffer, static_cast<int32_t>(field_id));
   }
 
   last_field_id_ = field_id;
@@ -484,8 +478,8 @@ void CompactProtocolImpl::writeMapBegin(Buffer::Instance& buffer, FieldType key_
 
   CompactFieldType compact_key_type = convertFieldType(key_type);
   CompactFieldType compact_value_type = convertFieldType(value_type);
-  BufferHelper::writeI8(buffer, (static_cast<int8_t>(compact_key_type) << 4) |
-                                    static_cast<int8_t>(compact_value_type));
+  buffer.writeByte((static_cast<int8_t>(compact_key_type) << 4) |
+                   static_cast<int8_t>(compact_value_type));
 }
 
 void CompactProtocolImpl::writeMapEnd(Buffer::Instance& buffer) { UNREFERENCED_PARAMETER(buffer); }
@@ -501,9 +495,9 @@ void CompactProtocolImpl::writeListBegin(Buffer::Instance& buffer, FieldType ele
   if (size < 0xF) {
     // Short form list/set header
     int8_t short_size = static_cast<int8_t>(size & 0xF);
-    BufferHelper::writeI8(buffer, (short_size << 4) | static_cast<int8_t>(compact_elem_type));
+    buffer.writeByte((short_size << 4) | static_cast<int8_t>(compact_elem_type));
   } else {
-    BufferHelper::writeI8(buffer, 0xF0 | static_cast<int8_t>(compact_elem_type));
+    buffer.writeByte(0xF0 | static_cast<int8_t>(compact_elem_type));
     BufferHelper::writeVarIntI32(buffer, static_cast<int32_t>(size));
   }
 }
@@ -527,11 +521,11 @@ void CompactProtocolImpl::writeBool(Buffer::Instance& buffer, bool value) {
   }
 
   // Map/Set/List booleans are encoded as bytes.
-  BufferHelper::writeI8(buffer, value ? 1 : 0);
+  buffer.writeByte(value ? 1 : 0);
 }
 
 void CompactProtocolImpl::writeByte(Buffer::Instance& buffer, uint8_t value) {
-  BufferHelper::writeI8(buffer, value);
+  buffer.writeByte(value);
 }
 
 void CompactProtocolImpl::writeInt16(Buffer::Instance& buffer, int16_t value) {
@@ -548,7 +542,7 @@ void CompactProtocolImpl::writeInt64(Buffer::Instance& buffer, int64_t value) {
 }
 
 void CompactProtocolImpl::writeDouble(Buffer::Instance& buffer, double value) {
-  BufferHelper::writeDouble(buffer, value);
+  BufferHelper::writeBEDouble(buffer, value);
 }
 
 void CompactProtocolImpl::writeString(Buffer::Instance& buffer, const std::string& value) {
@@ -622,6 +616,17 @@ CompactProtocolImpl::CompactFieldType CompactProtocolImpl::convertFieldType(Fiel
         fmt::format("unknown protocol field type {}", static_cast<int8_t>(field_type)));
   }
 }
+
+class CompactProtocolConfigFactory : public ProtocolFactoryBase<CompactProtocolImpl> {
+public:
+  CompactProtocolConfigFactory() : ProtocolFactoryBase(ProtocolNames::get().COMPACT) {}
+};
+
+/**
+ * Static registration for the binary protocol. @see RegisterFactory.
+ */
+static Registry::RegisterFactory<CompactProtocolConfigFactory, NamedProtocolConfigFactory>
+    register_;
 
 } // namespace ThriftProxy
 } // namespace NetworkFilters

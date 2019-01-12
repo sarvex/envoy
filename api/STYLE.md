@@ -112,6 +112,10 @@ In addition, the following conventions should be followed:
   // [#comment:next free field: 28]
   ```
 
+* The [Breaking Change
+  Policy](https://github.com/envoyproxy/envoy/blob/master//CONTRIBUTING.md#breaking-change-policy) describes
+  API versioning, deprecation and compatibility.
+
 ## Package organization
 
 API definitions are layered hierarchically in packages from top-to-bottom:
@@ -131,3 +135,6 @@ the build system to prevent circular dependency formation. Package group
 `//envoy/api/v2:friends` selects consumers of the core API package (services and configs)
 and is the default visibility for the core API packages. The default visibility
 for services and configs should be `//docs` (proto documentation tool).
+
+Extensions should use the regular hierarchy. For example, configuration for network filters belongs
+in a package under `envoy.config.filter.network`.

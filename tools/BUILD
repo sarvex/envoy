@@ -15,6 +15,7 @@ exports_files([
     "check_format.py",
     "header_order.py",
     "envoy_build_fixer.py",
+    "check_repositories.sh",
 ])
 
 envoy_py_test_binary(
@@ -41,7 +42,7 @@ envoy_cc_binary(
         "//source/common/config:bootstrap_json_lib",
         "//source/common/json:json_loader_lib",
         "//source/common/protobuf:utility_lib",
-        "//source/common/stats:stats_lib",
+        "//source/common/stats:stats_options_lib",
         "@envoy_api//envoy/config/bootstrap/v2:bootstrap_cc",
     ],
 )

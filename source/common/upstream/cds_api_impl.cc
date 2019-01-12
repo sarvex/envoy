@@ -4,43 +4,33 @@
 
 #include "envoy/api/v2/cds.pb.validate.h"
 #include "envoy/api/v2/cluster/outlier_detection.pb.validate.h"
+#include "envoy/stats/scope.h"
 
 #include "common/common/cleanup.h"
 #include "common/config/resources.h"
 #include "common/config/subscription_factory.h"
 #include "common/config/utility.h"
 #include "common/protobuf/utility.h"
-#include "common/upstream/cds_subscription.h"
 
 namespace Envoy {
 namespace Upstream {
 
 CdsApiPtr CdsApiImpl::create(const envoy::api::v2::core::ConfigSource& cds_config,
-                             const absl::optional<envoy::api::v2::core::ConfigSource>& eds_config,
                              ClusterManager& cm, Event::Dispatcher& dispatcher,
                              Runtime::RandomGenerator& random,
                              const LocalInfo::LocalInfo& local_info, Stats::Scope& scope) {
-  return CdsApiPtr{
-      new CdsApiImpl(cds_config, eds_config, cm, dispatcher, random, local_info, scope)};
+  return CdsApiPtr{new CdsApiImpl(cds_config, cm, dispatcher, random, local_info, scope)};
 }
 
-CdsApiImpl::CdsApiImpl(const envoy::api::v2::core::ConfigSource& cds_config,
-                       const absl::optional<envoy::api::v2::core::ConfigSource>& eds_config,
-                       ClusterManager& cm, Event::Dispatcher& dispatcher,
-                       Runtime::RandomGenerator& random, const LocalInfo::LocalInfo& local_info,
-                       Stats::Scope& scope)
+CdsApiImpl::CdsApiImpl(const envoy::api::v2::core::ConfigSource& cds_config, ClusterManager& cm,
+                       Event::Dispatcher& dispatcher, Runtime::RandomGenerator& random,
+                       const LocalInfo::LocalInfo& local_info, Stats::Scope& scope)
     : cm_(cm), scope_(scope.createScope("cluster_manager.cds.")) {
   Config::Utility::checkLocalInfo("cds", local_info);
 
   subscription_ =
       Config::SubscriptionFactory::subscriptionFromConfigSource<envoy::api::v2::Cluster>(
-          cds_config, local_info.node(), dispatcher, cm, random, *scope_,
-          [this, &cds_config, &eds_config, &cm, &dispatcher, &random, &local_info,
-           &scope]() -> Config::Subscription<envoy::api::v2::Cluster>* {
-            return new CdsSubscription(Config::Utility::generateStats(*scope_), cds_config,
-                                       eds_config, cm, dispatcher, random, local_info,
-                                       scope.statsOptions());
-          },
+          cds_config, local_info, dispatcher, cm, random, *scope_,
           "envoy.api.v2.ClusterDiscoveryService.FetchClusters",
           "envoy.api.v2.ClusterDiscoveryService.StreamClusters");
 }
@@ -48,6 +38,13 @@ CdsApiImpl::CdsApiImpl(const envoy::api::v2::core::ConfigSource& cds_config,
 void CdsApiImpl::onConfigUpdate(const ResourceVector& resources, const std::string& version_info) {
   cm_.adsMux().pause(Config::TypeUrl::get().ClusterLoadAssignment);
   Cleanup eds_resume([this] { cm_.adsMux().resume(Config::TypeUrl::get().ClusterLoadAssignment); });
+
+  std::unordered_set<std::string> cluster_names;
+  for (const auto& cluster : resources) {
+    if (!cluster_names.insert(cluster.name()).second) {
+      throw EnvoyException(fmt::format("duplicate cluster {} found", cluster.name()));
+    }
+  }
   for (const auto& cluster : resources) {
     MessageUtil::validate(cluster);
   }

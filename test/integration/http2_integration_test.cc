@@ -13,7 +13,9 @@
 
 #include "gtest/gtest.h"
 
+using ::testing::HasSubstr;
 using ::testing::MatchesRegex;
+
 namespace Envoy {
 
 INSTANTIATE_TEST_CASE_P(IpVersions, Http2IntegrationTest,
@@ -38,6 +40,8 @@ TEST_P(Http2IntegrationTest, MultipleContentLengths) { testMultipleContentLength
 
 TEST_P(Http2IntegrationTest, ComputedHealthCheck) { testComputedHealthCheck(); }
 
+TEST_P(Http2IntegrationTest, AddEncodedTrailers) { testAddEncodedTrailers(); }
+
 TEST_P(Http2IntegrationTest, DrainClose) { testDrainClose(); }
 
 TEST_P(Http2IntegrationTest, RouterRequestAndResponseWithBodyNoBuffer) {
@@ -50,7 +54,7 @@ TEST_P(Http2IntegrationTest, FlowControlOnAndGiantBody) {
 }
 
 TEST_P(Http2IntegrationTest, RouterHeaderOnlyRequestAndResponseNoBuffer) {
-  testRouterHeaderOnlyRequestAndResponse(true);
+  testRouterHeaderOnlyRequestAndResponse();
 }
 
 TEST_P(Http2IntegrationTest, RouterRequestAndResponseLargeHeaderNoBuffer) {
@@ -58,7 +62,7 @@ TEST_P(Http2IntegrationTest, RouterRequestAndResponseLargeHeaderNoBuffer) {
 }
 
 TEST_P(Http2IntegrationTest, ShutdownWithActiveConnPoolConnections) {
-  testRouterHeaderOnlyRequestAndResponse(false);
+  testRequestAndResponseShutdownWithActiveConnection();
 }
 
 TEST_P(Http2IntegrationTest, RouterUpstreamDisconnectBeforeRequestcomplete) {
@@ -83,9 +87,25 @@ TEST_P(Http2IntegrationTest, RouterUpstreamResponseBeforeRequestComplete) {
 
 TEST_P(Http2IntegrationTest, TwoRequests) { testTwoRequests(); }
 
+TEST_P(Http2IntegrationTest, TwoRequestsWithForcedBackup) { testTwoRequests(true); }
+
 TEST_P(Http2IntegrationTest, Retry) { testRetry(); }
 
+TEST_P(Http2IntegrationTest, RetryAttemptCount) { testRetryAttemptCountHeader(); }
+
 TEST_P(Http2IntegrationTest, EnvoyHandling100Continue) { testEnvoyHandling100Continue(); }
+
+TEST_P(Http2MetadataIntegrationTest, ProxyMetadataInResponse) {
+  testEnvoyProxyMetadataInResponse();
+}
+
+TEST_P(Http2MetadataIntegrationTest, ProxyMultipleMetadata) { testEnvoyProxyMultipleMetadata(); }
+
+TEST_P(Http2MetadataIntegrationTest, ProxyInvalidMetadata) { testEnvoyProxyInvalidMetadata(); }
+
+TEST_P(Http2MetadataIntegrationTest, ProxyMultipleMetadataReachSizeLimit) {
+  testEnvoyMultipleMetadataReachSizeLimit();
+}
 
 TEST_P(Http2IntegrationTest, EnvoyHandlingDuplicate100Continue) {
   testEnvoyHandling100Continue(true);
@@ -103,6 +123,10 @@ TEST_P(Http2IntegrationTest, HittingEncoderFilterLimit) { testHittingEncoderFilt
 
 TEST_P(Http2IntegrationTest, GrpcRouterNotFound) { testGrpcRouterNotFound(); }
 
+TEST_P(Http2IntegrationTest, RetryHostPredicateFilter) { testRetryHostPredicateFilter(); }
+
+TEST_P(Http2IntegrationTest, RetryPriority) { testRetryPriority(); }
+
 TEST_P(Http2IntegrationTest, GrpcRetry) { testGrpcRetry(); }
 
 // Send a request with overly large headers, and ensure it results in stream reset.
@@ -119,6 +143,12 @@ TEST_P(Http2IntegrationTest, MaxHeadersInCodec) {
   response->waitForReset();
   codec_client_->close();
 }
+
+TEST_P(Http2IntegrationTest, EncodingHeaderOnlyResponse) { testHeadersOnlyFilterEncoding(); }
+
+TEST_P(Http2IntegrationTest, DecodingHeaderOnlyResponse) { testHeadersOnlyFilterDecoding(); }
+
+TEST_P(Http2IntegrationTest, DecodingHeaderOnlyInterleaved) { testHeadersOnlyFilterInterleaved(); }
 
 TEST_P(Http2IntegrationTest, DownstreamResetBeforeResponseComplete) {
   testDownstreamResetBeforeResponseComplete();
@@ -253,8 +283,8 @@ TEST_P(Http2IntegrationTest, IdleTimeoutWithSimultaneousRequests) {
   encoder1 = &encoder_decoder.first;
   auto response1 = std::move(encoder_decoder.second);
 
-  fake_upstream_connection1 = fake_upstreams_[0]->waitForHttpConnection(*dispatcher_);
-  upstream_request1 = fake_upstream_connection1->waitForNewStream(*dispatcher_);
+  ASSERT_TRUE(fake_upstreams_[0]->waitForHttpConnection(*dispatcher_, fake_upstream_connection1));
+  ASSERT_TRUE(fake_upstream_connection1->waitForNewStream(*dispatcher_, upstream_request1));
 
   // Start request 2
   auto encoder_decoder2 =
@@ -264,16 +294,16 @@ TEST_P(Http2IntegrationTest, IdleTimeoutWithSimultaneousRequests) {
                                                           {":authority", "host"}});
   encoder2 = &encoder_decoder2.first;
   auto response2 = std::move(encoder_decoder2.second);
-  fake_upstream_connection2 = fake_upstreams_[0]->waitForHttpConnection(*dispatcher_);
-  upstream_request2 = fake_upstream_connection2->waitForNewStream(*dispatcher_);
+  ASSERT_TRUE(fake_upstreams_[0]->waitForHttpConnection(*dispatcher_, fake_upstream_connection2));
+  ASSERT_TRUE(fake_upstream_connection2->waitForNewStream(*dispatcher_, upstream_request2));
 
   // Finish request 1
   codec_client_->sendData(*encoder1, request1_bytes, true);
-  upstream_request1->waitForEndStream(*dispatcher_);
+  ASSERT_TRUE(upstream_request1->waitForEndStream(*dispatcher_));
 
   // Finish request i2
   codec_client_->sendData(*encoder2, request2_bytes, true);
-  upstream_request2->waitForEndStream(*dispatcher_);
+  ASSERT_TRUE(upstream_request2->waitForEndStream(*dispatcher_));
 
   // Respond to request 2
   upstream_request2->encodeHeaders(Http::TestHeaderMapImpl{{":status", "200"}}, false);
@@ -300,8 +330,8 @@ TEST_P(Http2IntegrationTest, IdleTimeoutWithSimultaneousRequests) {
   EXPECT_EQ(request1_bytes, response1->body().size());
 
   // Do not send any requests and validate idle timeout kicks in after both the requests are done.
-  fake_upstream_connection1->waitForDisconnect();
-  fake_upstream_connection2->waitForDisconnect();
+  ASSERT_TRUE(fake_upstream_connection1->waitForDisconnect());
+  ASSERT_TRUE(fake_upstream_connection2->waitForDisconnect());
   test_server_->waitForCounterGe("cluster.cluster_0.upstream_cx_idle_timeout", 2);
 }
 
@@ -325,8 +355,8 @@ void Http2IntegrationTest::simultaneousRequest(int32_t request1_bytes, int32_t r
   encoder1 = &encoder_decoder.first;
   auto response1 = std::move(encoder_decoder.second);
 
-  fake_upstream_connection1 = fake_upstreams_[0]->waitForHttpConnection(*dispatcher_);
-  upstream_request1 = fake_upstream_connection1->waitForNewStream(*dispatcher_);
+  ASSERT_TRUE(fake_upstreams_[0]->waitForHttpConnection(*dispatcher_, fake_upstream_connection1));
+  ASSERT_TRUE(fake_upstream_connection1->waitForNewStream(*dispatcher_, upstream_request1));
 
   // Start request 2
   auto encoder_decoder2 =
@@ -336,16 +366,16 @@ void Http2IntegrationTest::simultaneousRequest(int32_t request1_bytes, int32_t r
                                                           {":authority", "host"}});
   encoder2 = &encoder_decoder2.first;
   auto response2 = std::move(encoder_decoder2.second);
-  fake_upstream_connection2 = fake_upstreams_[0]->waitForHttpConnection(*dispatcher_);
-  upstream_request2 = fake_upstream_connection2->waitForNewStream(*dispatcher_);
+  ASSERT_TRUE(fake_upstreams_[0]->waitForHttpConnection(*dispatcher_, fake_upstream_connection2));
+  ASSERT_TRUE(fake_upstream_connection2->waitForNewStream(*dispatcher_, upstream_request2));
 
   // Finish request 1
   codec_client_->sendData(*encoder1, request1_bytes, true);
-  upstream_request1->waitForEndStream(*dispatcher_);
+  ASSERT_TRUE(upstream_request1->waitForEndStream(*dispatcher_));
 
   // Finish request 2
   codec_client_->sendData(*encoder2, request2_bytes, true);
-  upstream_request2->waitForEndStream(*dispatcher_);
+  ASSERT_TRUE(upstream_request2->waitForEndStream(*dispatcher_));
 
   // Respond to request 2
   upstream_request2->encodeHeaders(Http::TestHeaderMapImpl{{":status", "200"}}, false);
@@ -368,10 +398,10 @@ void Http2IntegrationTest::simultaneousRequest(int32_t request1_bytes, int32_t r
   EXPECT_EQ(request2_bytes, response1->body().size());
 
   // Cleanup both downstream and upstream
-  fake_upstream_connection1->close();
-  fake_upstream_connection1->waitForDisconnect();
-  fake_upstream_connection2->close();
-  fake_upstream_connection2->waitForDisconnect();
+  ASSERT_TRUE(fake_upstream_connection1->close());
+  ASSERT_TRUE(fake_upstream_connection1->waitForDisconnect());
+  ASSERT_TRUE(fake_upstream_connection2->close());
+  ASSERT_TRUE(fake_upstream_connection2->waitForDisconnect());
   codec_client_->close();
 }
 
@@ -380,6 +410,63 @@ TEST_P(Http2IntegrationTest, SimultaneousRequest) { simultaneousRequest(1024, 51
 TEST_P(Http2IntegrationTest, SimultaneousRequestWithBufferLimits) {
   config_helper_.setBufferLimits(1024, 1024); // Set buffer limits upstream and downstream.
   simultaneousRequest(1024 * 32, 1024 * 16);
+}
+
+// Test downstream connection delayed close processing.
+TEST_P(Http2IntegrationTest, DelayedCloseAfterBadFrame) {
+  initialize();
+  Buffer::OwnedImpl buffer("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\nhelloworldcauseanerror");
+  std::string response;
+  RawConnectionDriver connection(
+      lookupPort("http"), buffer,
+      [&](Network::ClientConnection& connection, const Buffer::Instance& data) -> void {
+        response.append(data.toString());
+        connection.dispatcher().exit();
+      },
+      version_);
+
+  connection.run();
+  EXPECT_THAT(response, HasSubstr("SETTINGS expected"));
+  // Due to the multiple dispatchers involved (one for the RawConnectionDriver and another for the
+  // Envoy server), it's possible the delayed close timer could fire and close the server socket
+  // prior to the data callback above firing. Therefore, we may either still be connected, or have
+  // received a remote close.
+  if (connection.last_connection_event() == Network::ConnectionEvent::Connected) {
+    connection.run();
+  }
+  EXPECT_EQ(connection.last_connection_event(), Network::ConnectionEvent::RemoteClose);
+  EXPECT_EQ(test_server_->counter("http.config_test.downstream_cx_delayed_close_timeout")->value(),
+            1);
+}
+
+// Test disablement of delayed close processing on downstream connections.
+TEST_P(Http2IntegrationTest, DelayedCloseDisabled) {
+  config_helper_.addConfigModifier(
+      [](envoy::config::filter::network::http_connection_manager::v2::HttpConnectionManager& hcm) {
+        hcm.mutable_delayed_close_timeout()->set_seconds(0);
+      });
+  initialize();
+  Buffer::OwnedImpl buffer("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\nhelloworldcauseanerror");
+  std::string response;
+  RawConnectionDriver connection(
+      lookupPort("http"), buffer,
+      [&](Network::ClientConnection& connection, const Buffer::Instance& data) -> void {
+        response.append(data.toString());
+        connection.dispatcher().exit();
+      },
+      version_);
+
+  connection.run();
+  EXPECT_THAT(response, HasSubstr("SETTINGS expected"));
+  // Due to the multiple dispatchers involved (one for the RawConnectionDriver and another for the
+  // Envoy server), it's possible for the 'connection' to receive the data and exit the dispatcher
+  // prior to the FIN being received from the server.
+  if (connection.last_connection_event() == Network::ConnectionEvent::Connected) {
+    connection.run();
+  }
+  EXPECT_EQ(connection.last_connection_event(), Network::ConnectionEvent::RemoteClose);
+  EXPECT_EQ(test_server_->counter("http.config_test.downstream_cx_delayed_close_timeout")->value(),
+            0);
 }
 
 Http2RingHashIntegrationTest::Http2RingHashIntegrationTest() {
@@ -400,18 +487,25 @@ Http2RingHashIntegrationTest::~Http2RingHashIntegrationTest() {
     codec_client_ = nullptr;
   }
   for (auto it = fake_upstream_connections_.begin(); it != fake_upstream_connections_.end(); ++it) {
-    (*it)->close();
-    (*it)->waitForDisconnect();
+    AssertionResult result = (*it)->close();
+    RELEASE_ASSERT(result, result.message());
+    result = (*it)->waitForDisconnect();
+    RELEASE_ASSERT(result, result.message());
   }
 }
 
 void Http2RingHashIntegrationTest::createUpstreams() {
   for (int i = 0; i < num_upstreams_; i++) {
-    fake_upstreams_.emplace_back(new FakeUpstream(0, FakeHttpConnection::Type::HTTP1, version_));
+    fake_upstreams_.emplace_back(
+        new FakeUpstream(0, FakeHttpConnection::Type::HTTP1, version_, timeSystem()));
   }
 }
 
 INSTANTIATE_TEST_CASE_P(IpVersions, Http2RingHashIntegrationTest,
+                        testing::ValuesIn(TestEnvironment::getIpVersionsForTest()),
+                        TestUtility::ipTestParamsToString);
+
+INSTANTIATE_TEST_CASE_P(IpVersions, Http2MetadataIntegrationTest,
                         testing::ValuesIn(TestEnvironment::getIpVersionsForTest()),
                         TestUtility::ipTestParamsToString);
 
@@ -435,17 +529,20 @@ void Http2RingHashIntegrationTest::sendMultipleRequests(
   }
 
   for (uint32_t i = 0; i < num_requests; ++i) {
-    auto fake_upstream_connection =
-        FakeUpstream::waitForHttpConnection(*dispatcher_, fake_upstreams_);
+    FakeHttpConnectionPtr fake_upstream_connection;
+    ASSERT_TRUE(FakeUpstream::waitForHttpConnection(*dispatcher_, fake_upstreams_,
+                                                    fake_upstream_connection));
     // As data and streams are interwoven, make sure waitForNewStream()
     // ignores incoming data and waits for actual stream establishment.
-    upstream_requests.push_back(fake_upstream_connection->waitForNewStream(*dispatcher_, true));
+    upstream_requests.emplace_back();
+    ASSERT_TRUE(
+        fake_upstream_connection->waitForNewStream(*dispatcher_, upstream_requests.back(), true));
     upstream_requests.back()->setAddServedByHeader(true);
     fake_upstream_connections_.push_back(std::move(fake_upstream_connection));
   }
 
   for (uint32_t i = 0; i < num_requests; ++i) {
-    upstream_requests[i]->waitForEndStream(*dispatcher_);
+    ASSERT_TRUE(upstream_requests[i]->waitForEndStream(*dispatcher_));
     upstream_requests[i]->encodeHeaders(Http::TestHeaderMapImpl{{":status", "200"}}, false);
     upstream_requests[i]->encodeData(rand.random() % (1024 * 2), true);
   }

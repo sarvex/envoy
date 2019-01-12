@@ -15,6 +15,7 @@
 #include "common/buffer/buffer_impl.h"
 #include "common/common/assert.h"
 #include "common/common/fmt.h"
+#include "common/common/stack_array.h"
 #include "common/event/dispatcher_impl.h"
 #include "common/event/libevent.h"
 #include "common/network/connection_impl.h"
@@ -28,11 +29,11 @@
 
 #include "gtest/gtest.h"
 
+using testing::_;
 using testing::AnyNumber;
 using testing::AtLeast;
 using testing::Invoke;
 using testing::NiceMock;
-using testing::_;
 
 namespace Envoy {
 
@@ -56,7 +57,11 @@ void IntegrationStreamDecoder::waitForHeaders() {
 void IntegrationStreamDecoder::waitForBodyData(uint64_t size) {
   ASSERT(body_data_waiting_length_ == 0);
   body_data_waiting_length_ = size;
-  dispatcher_.run(Event::Dispatcher::RunType::Block);
+  body_data_waiting_length_ -=
+      std::min(body_data_waiting_length_, static_cast<uint64_t>(body_.size()));
+  if (body_data_waiting_length_ > 0) {
+    dispatcher_.run(Event::Dispatcher::RunType::Block);
+  }
 }
 
 void IntegrationStreamDecoder::waitForEndStream() {
@@ -90,12 +95,7 @@ void IntegrationStreamDecoder::decodeHeaders(Http::HeaderMapPtr&& headers, bool 
 
 void IntegrationStreamDecoder::decodeData(Buffer::Instance& data, bool end_stream) {
   saw_end_stream_ = end_stream;
-  uint64_t num_slices = data.getRawSlices(nullptr, 0);
-  Buffer::RawSlice slices[num_slices];
-  data.getRawSlices(slices, num_slices);
-  for (Buffer::RawSlice& slice : slices) {
-    body_.append(static_cast<const char*>(slice.mem_), slice.len_);
-  }
+  body_ += data.toString();
 
   if (end_stream && waiting_for_end_stream_) {
     dispatcher_.exit();
@@ -112,6 +112,13 @@ void IntegrationStreamDecoder::decodeTrailers(Http::HeaderMapPtr&& trailers) {
   trailers_ = std::move(trailers);
   if (waiting_for_end_stream_) {
     dispatcher_.exit();
+  }
+}
+
+void IntegrationStreamDecoder::decodeMetadata(Http::MetadataMapPtr&& metadata_map) {
+  // Combines newly received metadata with the existing metadata.
+  for (const auto metadata : *metadata_map) {
+    metadata_map_->insert(metadata);
   }
 }
 
@@ -155,7 +162,7 @@ void IntegrationTcpClient::close() { connection_->close(Network::ConnectionClose
 
 void IntegrationTcpClient::waitForData(const std::string& data, bool exact_match) {
   auto found = payload_reader_->data().find(data);
-  if ((exact_match && found != std::string::npos) || (!exact_match && found == 0)) {
+  if (found == 0 || (!exact_match && found != std::string::npos)) {
     return;
   }
 
@@ -211,10 +218,11 @@ void IntegrationTcpClient::ConnectionCallbacks::onEvent(Network::ConnectionEvent
 }
 
 BaseIntegrationTest::BaseIntegrationTest(Network::Address::IpVersion version,
-                                         const std::string& config)
-    : api_(new Api::Impl(std::chrono::milliseconds(10000))),
-      mock_buffer_factory_(new NiceMock<MockBufferFactory>),
-      dispatcher_(new Event::DispatcherImpl(Buffer::WatermarkFactoryPtr{mock_buffer_factory_})),
+                                         TestTimeSystemPtr time_system, const std::string& config)
+    : api_(Api::createApiForTest(stats_store_)),
+      mock_buffer_factory_(new NiceMock<MockBufferFactory>), time_system_(std::move(time_system)),
+      dispatcher_(new Event::DispatcherImpl(
+          *time_system_, Buffer::WatermarkFactoryPtr{mock_buffer_factory_}, *api_)),
       version_(version), config_helper_(version, config),
       default_log_level_(TestEnvironment::getOptions().logLevel()) {
   // This is a hack, but there are situations where we disconnect fake upstream connections and
@@ -223,7 +231,7 @@ BaseIntegrationTest::BaseIntegrationTest(Network::Address::IpVersion version,
   // notification and clear the pool connection if necessary. A real fix would require adding fairly
   // complex test hooks to the server and/or spin waiting on stats, neither of which I think are
   // necessary right now.
-  std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  time_system_->sleep(std::chrono::milliseconds(10));
   ON_CALL(*mock_buffer_factory_, create_(_, _))
       .WillByDefault(Invoke([](std::function<void()> below_low,
                                std::function<void()> above_high) -> Buffer::Instance* {
@@ -253,10 +261,11 @@ void BaseIntegrationTest::initialize() {
 void BaseIntegrationTest::createUpstreams() {
   for (uint32_t i = 0; i < fake_upstreams_count_; ++i) {
     if (autonomous_upstream_) {
-      fake_upstreams_.emplace_back(new AutonomousUpstream(0, upstream_protocol_, version_));
+      fake_upstreams_.emplace_back(
+          new AutonomousUpstream(0, upstream_protocol_, version_, *time_system_));
     } else {
       fake_upstreams_.emplace_back(
-          new FakeUpstream(0, upstream_protocol_, version_, enable_half_close_));
+          new FakeUpstream(0, upstream_protocol_, version_, *time_system_, enable_half_close_));
     }
   }
 }
@@ -268,6 +277,9 @@ void BaseIntegrationTest::createEnvoy() {
       ports.push_back(upstream->localAddress()->ip()->port());
     }
   }
+  // Note that finalize assumes that every fake_upstream_ must correspond to a bootstrap config
+  // static entry. So, if you want to manually create a fake upstream without specifying it in the
+  // config, you will need to do so *after* initialize() (which calls this function) is done.
   config_helper_.finalize(ports);
 
   ENVOY_LOG_MISC(debug, "Running Envoy with configuration {}",
@@ -299,8 +311,8 @@ void BaseIntegrationTest::setUpstreamProtocol(FakeHttpConnection::Type protocol)
 }
 
 IntegrationTcpClientPtr BaseIntegrationTest::makeTcpConnection(uint32_t port) {
-  return IntegrationTcpClientPtr{new IntegrationTcpClient(*dispatcher_, *mock_buffer_factory_, port,
-                                                          version_, enable_half_close_)};
+  return std::make_unique<IntegrationTcpClient>(*dispatcher_, *mock_buffer_factory_, port, version_,
+                                                enable_half_close_);
 }
 
 void BaseIntegrationTest::registerPort(const std::string& key, uint32_t port) {
@@ -312,7 +324,10 @@ uint32_t BaseIntegrationTest::lookupPort(const std::string& key) {
   if (it != port_map_.end()) {
     return it->second;
   }
-  RELEASE_ASSERT(false, "");
+  RELEASE_ASSERT(
+      false,
+      fmt::format("lookupPort() called on service type '{}', which has not been added to port_map_",
+                  key));
 }
 
 void BaseIntegrationTest::setUpstreamAddress(uint32_t upstream_index,
@@ -329,6 +344,7 @@ void BaseIntegrationTest::registerTestServerPorts(const std::vector<std::string>
   for (; port_it != port_names.end() && listener_it != listeners.end(); ++port_it, ++listener_it) {
     const auto listen_addr = listener_it->get().socket().localAddress();
     if (listen_addr->type() == Network::Address::Type::Ip) {
+      ENVOY_LOG(debug, "registered '{}' as port {}.", *port_it, listen_addr->ip()->port());
       registerPort(*port_it, listen_addr->ip()->port());
     }
   }
@@ -341,8 +357,10 @@ void BaseIntegrationTest::registerTestServerPorts(const std::vector<std::string>
 void BaseIntegrationTest::createGeneratedApiTestServer(const std::string& bootstrap_path,
                                                        const std::vector<std::string>& port_names) {
   test_server_ = IntegrationTestServer::create(bootstrap_path, version_,
-                                               pre_worker_start_test_steps_, deterministic_);
-  if (config_helper_.bootstrap().static_resources().listeners_size() > 0) {
+                                               pre_worker_start_test_steps_, deterministic_,
+                                               *time_system_, *api_, defer_listener_finalization_);
+  if (config_helper_.bootstrap().static_resources().listeners_size() > 0 &&
+      !defer_listener_finalization_) {
     // Wait for listeners to be created before invoking registerTestServerPorts() below, as that
     // needs to know about the bound listener ports.
     test_server_->waitForCounterGe("listener_manager.listener_create_success", 1);
@@ -369,9 +387,9 @@ void BaseIntegrationTest::createApiTestServer(const ApiFilesystemConfig& api_fil
 
 void BaseIntegrationTest::createTestServer(const std::string& json_path,
                                            const std::vector<std::string>& port_names) {
-  test_server_ = IntegrationTestServer::create(
-      TestEnvironment::temporaryFileSubstitute(json_path, port_map_, version_), version_, nullptr,
-      deterministic_);
+  test_server_ = createIntegrationTestServer(
+      TestEnvironment::temporaryFileSubstitute(json_path, port_map_, version_), nullptr,
+      *time_system_);
   registerTestServerPorts(port_names);
 }
 
@@ -390,6 +408,15 @@ void BaseIntegrationTest::sendRawHttpAndWaitForResponse(int port, const char* ra
       version_);
 
   connection.run();
+}
+
+IntegrationTestServerPtr
+BaseIntegrationTest::createIntegrationTestServer(const std::string& bootstrap_path,
+                                                 std::function<void()> pre_worker_start_test_steps,
+                                                 Event::TestTimeSystem& time_system) {
+  return IntegrationTestServer::create(bootstrap_path, version_, pre_worker_start_test_steps,
+                                       deterministic_, time_system, *api_,
+                                       defer_listener_finalization_);
 }
 
 } // namespace Envoy
