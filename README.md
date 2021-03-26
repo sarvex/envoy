@@ -1,3 +1,8 @@
+# Deprecation Warning
+
+**This repository is no longer maintained. Please use the [upstream envoy repository](https://github.com/envoyproxy/envoy) which now supports Windows as a target platform.**
+
+---
 ![Envoy Logo](https://github.com/envoyproxy/artwork/blob/master/PNG/Envoy_Logo_Final_PANTONE.png)
 
 [C++ L7 proxy and communication bus](https://www.envoyproxy.io/)
