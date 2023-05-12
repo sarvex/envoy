@@ -39,24 +39,20 @@ def decode_stacktrace_log(input_source):
       line = input_source.readline()
       if line == "":
         return  # EOF
-      begin_trace_match = trace_begin_re.search(line)
-      if begin_trace_match:
+      if begin_trace_match := trace_begin_re.search(line):
         log_prefix, thread_id, objfile = begin_trace_match.groups()
         traces[thread_id] = Backtrace(log_prefix=log_prefix, obj_list=[])
         traces[thread_id].obj_list.append(AddressList(obj_file=objfile, addresses=[]))
         continue
-      stackaddr_match = stackaddr_re.search(line)
-      if stackaddr_match:
+      if stackaddr_match := stackaddr_re.search(line):
         thread_id, address = stackaddr_match.groups()
         traces[thread_id].obj_list[-1].addresses.append(address)
         continue
-      new_object_match = new_object_re.search(line)
-      if new_object_match:
+      if new_object_match := new_object_re.search(line):
         thread_id, newobj = new_object_match.groups()
         traces[thread_id].obj_list.append(AddressList(obj_file=newobj, addresses=[]))
         continue
-      trace_end_match = trace_end_re.search(line)
-      if trace_end_match:
+      if trace_end_match := trace_end_re.search(line):
         thread_id = trace_end_match.groups()[0]
         output_stacktrace(thread_id, traces[thread_id])
       else:
@@ -83,10 +79,9 @@ def run_addr2line(obj_file, piped_input):
 def output_stacktrace(thread_id, traceinfo):
   output_lines = []
   for address_list in traceinfo.obj_list:
-    piped_input = ""
     obj_name = address_list.obj_file
-    for stack_addr in address_list.addresses:
-      piped_input += (stack_addr + "\n")
+    piped_input = "".join(
+        (stack_addr + "\n") for stack_addr in address_list.addresses)
     output_lines += run_addr2line(obj_name, piped_input)
 
   resolved_stack_frames = enumerate(output_lines, start=1)

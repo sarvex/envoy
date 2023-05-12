@@ -121,13 +121,17 @@ def generate_config(template_path, template, output_file, **context):
 generate_config(
     SCRIPT_DIR,
     'envoy_front_proxy_v2.template.yaml',
-    '{}/envoy_front_proxy.v2.yaml'.format(OUT_DIR),
-    clusters=front_envoy_clusters)
+    f'{OUT_DIR}/envoy_front_proxy.v2.yaml',
+    clusters=front_envoy_clusters,
+)
 
 # Generate a demo config for the double proxy. This sets up both an HTTP and HTTPS listeners,
 # and backhauls the traffic to the main front proxy.
-generate_config(SCRIPT_DIR, 'envoy_double_proxy_v2.template.yaml',
-                '{}/envoy_double_proxy.v2.yaml'.format(OUT_DIR))
+generate_config(
+    SCRIPT_DIR,
+    'envoy_double_proxy_v2.template.yaml',
+    f'{OUT_DIR}/envoy_double_proxy.v2.yaml',
+)
 
 # Generate a demo config for the service to service (local) proxy. This sets up several different
 # listeners:
@@ -140,10 +144,12 @@ generate_config(SCRIPT_DIR, 'envoy_double_proxy_v2.template.yaml',
 generate_config(
     SCRIPT_DIR,
     'envoy_service_to_service_v2.template.yaml',
-    '{}/envoy_service_to_service.yaml'.format(OUT_DIR),
+    f'{OUT_DIR}/envoy_service_to_service.yaml',
     internal_virtual_hosts=service_to_service_envoy_clusters,
     external_virtual_hosts=external_virtual_hosts,
-    mongos_servers=mongos_servers)
+    mongos_servers=mongos_servers,
+)
 
 for google_ext in ['v2.yaml']:
-  shutil.copy(os.path.join(SCRIPT_DIR, 'google_com_proxy.%s' % google_ext), OUT_DIR)
+  shutil.copy(os.path.join(SCRIPT_DIR, f'google_com_proxy.{google_ext}'),
+              OUT_DIR)

@@ -42,12 +42,13 @@ def FixBuild(path):
           in_load = None  # investigate only first load() directive
           if seen_ebs:
             if not seen_epkg:
-              outlines.append(line.rstrip()[:-1] + ', "envoy_package")\n')
-              outlines.append('\nenvoy_package()\n')
+              outlines.extend((
+                  line.rstrip()[:-1] + ', "envoy_package")\n',
+                  '\nenvoy_package()\n',
+              ))
               continue
           else:
-            outlines.append(line)
-            outlines.append(ENVOY_PACKAGE_STRING)
+            outlines.extend((line, ENVOY_PACKAGE_STRING))
             continue
       outlines.append(line)
 

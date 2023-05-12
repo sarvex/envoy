@@ -52,9 +52,8 @@ def GetHistory():
   history = defaultdict(set)
   for commit, lines in repo.blame('HEAD', 'DEPRECATED.md'):
     for line in lines:
-      sr = re.match('## Version (.*)', line)
-      if sr:
-        version = sr.group(1)
+      if sr := re.match('## Version (.*)', line):
+        version = sr[1]
         continue
       history[version].add(commit)
   return history
@@ -63,9 +62,7 @@ def GetHistory():
 def GetConfirmation():
   """Obtain stdin confirmation to create issues in GH."""
   inp = raw_input('Creates issues? [yN] ')
-  if inp == 'y':
-    return True
-  return False
+  return inp == 'y'
 
 
 def CreateIssues(deprecate_for_version, deprecate_by_version, access_token, commits):
