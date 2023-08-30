@@ -28,11 +28,11 @@ def term_all_children():
 
   global pid_list
   for pid in pid_list:
-    print("sending TERM to PID={}".format(pid))
+    print(f"sending TERM to PID={pid}")
     try:
       os.kill(pid, signal.SIGTERM)
     except OSError:
-      print("error sending TERM to PID={} continuing".format(pid))
+      print(f"error sending TERM to PID={pid} continuing")
 
   all_exited = False
 
@@ -57,7 +57,7 @@ def term_all_children():
     print("all children exited cleanly")
   else:
     for pid in pid_list:
-      print("child PID={} did not exit cleanly, killing".format(pid))
+      print(f"child PID={pid} did not exit cleanly, killing")
     force_kill_all_children()
     sys.exit(1)  # error status because a child did not exit cleanly
 
@@ -69,11 +69,11 @@ def force_kill_all_children():
 
   global pid_list
   for pid in pid_list:
-    print("force killing PID={}".format(pid))
+    print(f"force killing PID={pid}")
     try:
       os.kill(pid, signal.SIGKILL)
     except OSError:
-      print("error force killing PID={} continuing".format(pid))
+      print(f"error force killing PID={pid} continuing")
 
   pid_list = []
 
@@ -110,11 +110,11 @@ def sigusr1_handler(signum, frame):
 
   global pid_list
   for pid in pid_list:
-    print("sending SIGUSR1 to PID={}".format(pid))
+    print(f"sending SIGUSR1 to PID={pid}")
     try:
       os.kill(pid, signal.SIGUSR1)
     except OSError:
-      print("error in SIGUSR1 to PID={} continuing".format(pid))
+      print(f"error in SIGUSR1 to PID={pid} continuing")
 
 
 def sigchld_handler(signum, frame):
@@ -139,16 +139,13 @@ def sigchld_handler(signum, frame):
     # Now we see how the child exited.
     if os.WIFEXITED(exit_status):
       exit_code = os.WEXITSTATUS(exit_status)
-      print("PID={} exited with code={}".format(ret_pid, exit_code))
-      if exit_code == 0:
-        # Normal exit. We assume this was on purpose.
-        pass
-      else:
+      print(f"PID={ret_pid} exited with code={exit_code}")
+      if exit_code != 0:
         # Something bad happened. We need to tear everything down so that whoever started the
         # restarter can know about this situation and restart the whole thing.
         kill_all_and_exit = True
     elif os.WIFSIGNALED(exit_status):
-      print("PID={} was killed with signal={}".format(ret_pid, os.WTERMSIG(exit_status)))
+      print(f"PID={ret_pid} was killed with signal={os.WTERMSIG(exit_status)}")
       kill_all_and_exit = True
     else:
       kill_all_and_exit = True
@@ -173,7 +170,7 @@ def fork_and_exec():
 
   global restart_epoch
   os.environ['RESTART_EPOCH'] = str(restart_epoch)
-  print("forking and execing new child process at epoch {}".format(restart_epoch))
+  print(f"forking and execing new child process at epoch {restart_epoch}")
   restart_epoch += 1
 
   child_pid = os.fork()
@@ -182,7 +179,7 @@ def fork_and_exec():
     os.execl(sys.argv[1], sys.argv[1])
   else:
     # Parent process
-    print("forked new child process with PID={}".format(child_pid))
+    print(f"forked new child process with PID={child_pid}")
     pid_list.append(child_pid)
 
 
@@ -190,7 +187,7 @@ def main():
   """ Script main. This script is designed so that a process watcher like runit or monit can watch
       this process and take corrective action if it ever goes away. """
 
-  print("starting hot-restarter with target: {}".format(sys.argv[1]))
+  print(f"starting hot-restarter with target: {sys.argv[1]}")
 
   signal.signal(signal.SIGTERM, sigterm_handler)
   signal.signal(signal.SIGINT, sigint_handler)

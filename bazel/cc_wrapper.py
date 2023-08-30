@@ -57,7 +57,7 @@ def main():
         (flagfile_fd, flagfile_path) = tempfile.mkstemp(dir='./', suffix=".linker-params")
         with closing_fd(flagfile_fd):
           sanitize_flagfile(arg[len("-Wl,@"):], flagfile_fd)
-        argv.append("-Wl,@" + flagfile_path)
+        argv.append(f"-Wl,@{flagfile_path}")
       else:
         argv.append(arg)
   else:

@@ -23,7 +23,7 @@ class TFinagleServerProcessor(TProcessor):
       return self._underlying.process(iprot, oprot)
 
     (name, ttype, seqid) = iprot.readMessageBegin()
-    if ttype != TMessageType.CALL and ttype != TMessageType.ONEWAY:
+    if ttype not in [TMessageType.CALL, TMessageType.ONEWAY]:
       raise TException("TFinagle protocol only supports CALL & ONEWAY")
 
     # Check if this is an upgrade request.

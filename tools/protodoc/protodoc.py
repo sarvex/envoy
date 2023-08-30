@@ -53,19 +53,17 @@ PROTO_STATUS_ANNOTATION = 'proto-status'
 # Where v2 differs from v1..
 V2_API_DIFF_ANNOTATION = 'v2-api-diff'
 
-VALID_ANNOTATIONS = set([
+VALID_ANNOTATIONS = {
     DOC_TITLE_ANNOTATION,
     NOT_IMPLEMENTED_WARN_ANNOTATION,
     NOT_IMPLEMENTED_HIDE_ANNOTATION,
     V2_API_DIFF_ANNOTATION,
     COMMENT_ANNOTATION,
     PROTO_STATUS_ANNOTATION,
-])
+}
 
 # These can propagate from file scope to message/enum scope (and be overridden).
-INHERITED_ANNOTATIONS = set([
-    PROTO_STATUS_ANNOTATION,
-])
+INHERITED_ANNOTATIONS = {PROTO_STATUS_ANNOTATION}
 
 # Template for data plane API URLs.
 # TODO(htuch): Add the ability to build a permalink by feeding a hash
@@ -82,14 +80,14 @@ def FormatCommentWithAnnotations(s, annotations, type_name):
     s += '\n.. WARNING::\n  Not implemented yet\n'
   if V2_API_DIFF_ANNOTATION in annotations:
     s += '\n.. NOTE::\n  **v2 API difference**: ' + annotations[V2_API_DIFF_ANNOTATION] + '\n'
-  if type_name == 'message' or type_name == 'enum':
-    if PROTO_STATUS_ANNOTATION in annotations:
-      status = annotations[PROTO_STATUS_ANNOTATION]
-      if status not in ['frozen', 'draft', 'experimental']:
-        raise ProtodocError('Unknown proto status: %s' % status)
-      if status == 'draft' or status == 'experimental':
-        s += ('\n.. WARNING::\n This %s type has :ref:`%s '
-              '<config_overview_v2_status>` status.\n' % (type_name, status))
+  if (type_name in ['message', 'enum']
+      and PROTO_STATUS_ANNOTATION in annotations):
+    status = annotations[PROTO_STATUS_ANNOTATION]
+    if status not in ['frozen', 'draft', 'experimental']:
+      raise ProtodocError(f'Unknown proto status: {status}')
+    if status in ['draft', 'experimental']:
+      s += ('\n.. WARNING::\n This %s type has :ref:`%s '
+            '<config_overview_v2_status>` status.\n' % (type_name, status))
   return s
 
 
@@ -113,7 +111,7 @@ def ExtractAnnotations(s, inherited_annotations=None, type_name='file'):
   for group in groups:
     annotation = group[0]
     if annotation not in VALID_ANNOTATIONS:
-      raise ProtodocError('Unknown annotation: %s' % annotation)
+      raise ProtodocError(f'Unknown annotation: {annotation}')
     annotations[group[0]] = group[1].lstrip()
   return FormatCommentWithAnnotations(without_annotations, annotations, type_name), annotations
 
@@ -171,10 +169,11 @@ class SourceCodeInfo(object):
     Returns:
       A string with a corresponding data plane API GitHub Url.
     """
-    for location in self._proto.location:
-      if location.path == path:
-        return DATA_PLANE_API_URL_FMT % (self._name, location.span[0])
-    return ''
+    return next(
+        (DATA_PLANE_API_URL_FMT % (self._name, location.span[0])
+         for location in self._proto.location if location.path == path),
+        '',
+    )
 
 
 class TypeContext(object):
@@ -207,10 +206,7 @@ class TypeContext(object):
     self.type_name = 'file'
 
   def _Extend(self, path, type_name, name):
-    if not self.name:
-      extended_name = name
-    else:
-      extended_name = '%s.%s' % (self.name, name)
+    extended_name = name if not self.name else f'{self.name}.{name}'
     extended = TypeContext(self.source_code_info, extended_name)
     extended.path = self.path + path
     extended.type_name = type_name
@@ -313,11 +309,11 @@ def IndentLines(spaces, lines):
 
 
 def FormatInternalLink(text, ref):
-  return ':ref:`%s <%s>`' % (text, ref)
+  return f':ref:`{text} <{ref}>`'
 
 
 def FormatExternalLink(text, ref):
-  return '`%s <%s>`_' % (text, ref)
+  return f'`{text} <{ref}>`_'
 
 
 def FormatHeader(style, text):
@@ -363,9 +359,7 @@ def FormatFieldTypeAsJson(type_context, field):
     return '"{...}"'
   if field.label == field.LABEL_REPEATED:
     return '[]'
-  if field.type == field.TYPE_MESSAGE:
-    return '"{...}"'
-  return '"..."'
+  return '"{...}"' if field.type == field.TYPE_MESSAGE else '"..."'
 
 
 def FormatMessageAsJson(type_context, msg):
@@ -383,7 +377,7 @@ def FormatMessageAsJson(type_context, msg):
     leading_comment, comment_annotations = field_type_context.LeadingCommentPathLookup()
     if NOT_IMPLEMENTED_HIDE_ANNOTATION in comment_annotations:
       continue
-    lines.append('"%s": %s' % (field.name, FormatFieldTypeAsJson(type_context, field)))
+    lines.append(f'"{field.name}": {FormatFieldTypeAsJson(type_context, field)}')
 
   if lines:
     return '.. code-block:: json\n\n  {\n' + ',\n'.join(IndentLines(4, lines)) + '\n  }\n\n'
@@ -403,14 +397,12 @@ def NormalizeFQN(fqn):
   """
   if fqn.startswith(ENVOY_API_NAMESPACE_PREFIX):
     return fqn[len(ENVOY_API_NAMESPACE_PREFIX):]
-  if fqn.startswith(ENVOY_PREFIX):
-    return fqn[len(ENVOY_PREFIX):]
-  return fqn
+  return fqn[len(ENVOY_PREFIX):] if fqn.startswith(ENVOY_PREFIX) else fqn
 
 
 def FormatEmph(s):
   """RST format a string for emphasis."""
-  return '*%s*' % s
+  return f'*{s}*'
 
 
 def FormatFieldType(type_context, field):
@@ -437,13 +429,15 @@ def FormatFieldType(type_context, field):
   elif field.type_name.startswith(WKT_NAMESPACE_PREFIX):
     wkt = field.type_name[len(WKT_NAMESPACE_PREFIX):]
     return FormatExternalLink(
-        wkt, 'https://developers.google.com/protocol-buffers/docs/reference/google.protobuf#%s' %
-        wkt.lower())
+        wkt,
+        f'https://developers.google.com/protocol-buffers/docs/reference/google.protobuf#{wkt.lower()}',
+    )
   elif field.type_name.startswith(RPC_NAMESPACE_PREFIX):
     rpc = field.type_name[len(RPC_NAMESPACE_PREFIX):]
     return FormatExternalLink(
         rpc,
-        'https://cloud.google.com/natural-language/docs/reference/rpc/google.rpc#%s' % rpc.lower())
+        f'https://cloud.google.com/natural-language/docs/reference/rpc/google.rpc#{rpc.lower()}',
+    )
   elif field.type_name:
     return field.type_name
 
@@ -467,7 +461,7 @@ def FormatFieldType(type_context, field):
   if field.type in pretty_type_names:
     return FormatExternalLink(pretty_type_names[field.type],
                               'https://developers.google.com/protocol-buffers/docs/proto#scalar')
-  raise ProtodocError('Unknown field type ' + str(field.type))
+  raise ProtodocError(f'Unknown field type {str(field.type)}')
 
 
 def StripLeadingSpace(s):
@@ -477,27 +471,27 @@ def StripLeadingSpace(s):
 
 def FileCrossRefLabel(msg_name):
   """File cross reference label."""
-  return 'envoy_api_file_%s' % msg_name
+  return f'envoy_api_file_{msg_name}'
 
 
 def MessageCrossRefLabel(msg_name):
   """Message cross reference label."""
-  return 'envoy_api_msg_%s' % msg_name
+  return f'envoy_api_msg_{msg_name}'
 
 
 def EnumCrossRefLabel(enum_name):
   """Enum cross reference label."""
-  return 'envoy_api_enum_%s' % enum_name
+  return f'envoy_api_enum_{enum_name}'
 
 
 def FieldCrossRefLabel(field_name):
   """Field cross reference label."""
-  return 'envoy_api_field_%s' % field_name
+  return f'envoy_api_field_{field_name}'
 
 
 def EnumValueCrossRefLabel(enum_value_name):
   """Enum value cross reference label."""
-  return 'envoy_api_enum_value_%s' % enum_value_name
+  return f'envoy_api_enum_value_{enum_value_name}'
 
 
 def FormatAnchor(label):
@@ -515,9 +509,8 @@ def FormatFieldAsDefinitionListItem(outer_type_context, type_context, field):
   Returns:
     RST formatted definition list item.
   """
-  annotations = []
-
   anchor = FormatAnchor(FieldCrossRefLabel(type_context.name))
+  annotations = []
   if field.options.HasExtension(validate_pb2.rules):
     rule = field.options.Extensions[validate_pb2.rules]
     if ((rule.HasField('message') and rule.message.required) or
@@ -551,8 +544,7 @@ def FormatFieldAsDefinitionListItem(outer_type_context, type_context, field):
   else:
     oneof_comment = ''
 
-  comment = '(%s) ' % ', '.join([FormatFieldType(type_context, field)] +
-                                annotations) + leading_comment
+  comment = f"({', '.join([FormatFieldType(type_context, field)] + annotations)}) {leading_comment}"
   return anchor + field.name + '\n' + MapLines(
       functools.partial(Indent, 2), comment + oneof_comment)
 
@@ -600,10 +592,12 @@ def FormatMessage(type_context, msg):
   # We need to do some extra work to recover the map type annotation from the
   # synthesized messages.
   type_context.map_typenames = {
-      '%s.%s' % (type_context.name, nested_msg.name): 'map<%s, %s>' % tuple(
-          map(functools.partial(FormatFieldType, type_context), nested_msg.field))
-      for nested_msg in msg.nested_type
-      if nested_msg.options.map_entry
+      f'{type_context.name}.{nested_msg.name}': 'map<%s, %s>' % tuple(
+          map(
+              functools.partial(FormatFieldType, type_context),
+              nested_msg.field,
+          ))
+      for nested_msg in msg.nested_type if nested_msg.options.map_entry
   }
   nested_msgs = '\n'.join(
       FormatMessage(type_context.ExtendNestedMessage(index, nested_msg.name), nested_msg)
@@ -613,8 +607,8 @@ def FormatMessage(type_context, msg):
       for index, nested_enum in enumerate(msg.enum_type))
   anchor = FormatAnchor(MessageCrossRefLabel(type_context.name))
   header = FormatHeader('-', type_context.name)
-  proto_link = FormatExternalLink('[%s proto]' % type_context.name,
-                                  type_context.GithubUrl()) + '\n\n'
+  proto_link = (FormatExternalLink(f'[{type_context.name} proto]',
+                                   type_context.GithubUrl()) + '\n\n')
   leading_comment, annotations = type_context.LeadingCommentPathLookup()
   if NOT_IMPLEMENTED_HIDE_ANNOTATION in annotations:
     return ''
@@ -666,9 +660,9 @@ def FormatEnum(type_context, enum):
     RST formatted section.
   """
   anchor = FormatAnchor(EnumCrossRefLabel(type_context.name))
-  header = FormatHeader('-', 'Enum %s' % type_context.name)
-  proto_link = FormatExternalLink('[%s proto]' % type_context.name,
-                                  type_context.GithubUrl()) + '\n\n'
+  header = FormatHeader('-', f'Enum {type_context.name}')
+  proto_link = (FormatExternalLink(f'[{type_context.name} proto]',
+                                   type_context.GithubUrl()) + '\n\n')
   leading_comment, annotations = type_context.LeadingCommentPathLookup()
   if NOT_IMPLEMENTED_HIDE_ANNOTATION in annotations:
     return ''
@@ -690,7 +684,7 @@ def GenerateRst(proto_file):
   # Find the earliest detached comment, attribute it to file level.
   # Also extract file level titles if any.
   header, comment = FormatHeaderFromFile('=', source_code_info.file_level_comment, proto_file.name)
-  package_prefix = NormalizeFQN('.' + proto_file.package + '.')[:-1]
+  package_prefix = NormalizeFQN(f'.{proto_file.package}.')[:-1]
   package_type_context = TypeContext(source_code_info, package_prefix)
   msgs = '\n'.join(
       FormatMessage(package_type_context.ExtendMessage(index, msg.name), msg)
@@ -711,7 +705,7 @@ def Main():
 
   for proto_file in request.proto_file:
     f = response.file.add()
-    f.name = proto_file.name + '.rst'
+    f.name = f'{proto_file.name}.rst'
     if cprofile_enabled:
       pr = cProfile.Profile()
       pr.enable()
@@ -724,7 +718,7 @@ def Main():
       ps = pstats.Stats(
           pr, stream=stats_stream).sort_stats(os.getenv('CPROFILE_SORTBY', 'cumulative'))
       stats_file = response.file.add()
-      stats_file.name = proto_file.name + '.rst.profile'
+      stats_file.name = f'{proto_file.name}.rst.profile'
       ps.print_stats()
       stats_file.content = stats_stream.getvalue()
   sys.stdout.write(response.SerializeToString())

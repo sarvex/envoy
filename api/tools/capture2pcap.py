@@ -71,9 +71,16 @@ def Capture2Pcap(capture_path, pcap_path):
     pass
 
   text2pcap_args = [
-      'text2pcap', '-D', '-t', '%Y-%m-%d %H:%M:%S.', '-6' if ipv6 else '-4',
-      '%s,%s' % (remote_address, local_address), '-T',
-      '%d,%d' % (remote_port, local_port), '-', pcap_path
+      'text2pcap',
+      '-D',
+      '-t',
+      '%Y-%m-%d %H:%M:%S.',
+      '-6' if ipv6 else '-4',
+      f'{remote_address},{local_address}',
+      '-T',
+      '%d,%d' % (remote_port, local_port),
+      '-',
+      pcap_path,
   ]
   text2pcap = sp.Popen(text2pcap_args, stdout=sp.PIPE, stdin=sp.PIPE)
   text2pcap.communicate('\n'.join(dumps))

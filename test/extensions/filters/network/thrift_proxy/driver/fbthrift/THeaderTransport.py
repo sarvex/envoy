@@ -59,10 +59,7 @@ def getVarint(n):
     else:
       out.append((n & 0xff) | 0x80)
       n = n >> 7
-  if sys.version_info[0] >= 3:
-    return bytes(out)
-  else:
-    return b''.join(map(chr, out))
+  return bytes(out) if sys.version_info[0] >= 3 else b''.join(map(chr, out))
 
 
 # INFO:(zuercher): Copied from
@@ -197,18 +194,21 @@ class THeaderTransport(TTransportBase, CReadableTransport):
 
   def set_max_frame_size(self, size):
     if size > MAX_BIG_FRAME_SIZE:
-      raise TTransportException(TTransportException.INVALID_FRAME_SIZE,
-                                "Cannot set max frame size > %s" % MAX_BIG_FRAME_SIZE)
+      raise TTransportException(
+          TTransportException.INVALID_FRAME_SIZE,
+          f"Cannot set max frame size > {MAX_BIG_FRAME_SIZE}",
+      )
     if size > MAX_FRAME_SIZE and self.__client_type != CLIENT_TYPE.HEADER:
       raise TTransportException(
           TTransportException.INVALID_FRAME_SIZE,
-          "Cannot set max frame size > %s for clients other than HEADER" % MAX_FRAME_SIZE)
+          f"Cannot set max frame size > {MAX_FRAME_SIZE} for clients other than HEADER",
+      )
     self.__max_frame_size = size
 
   def get_peer_identity(self):
-    if self.IDENTITY_HEADER in self.__read_headers:
-      if self.__read_headers[self.ID_VERSION_HEADER] == self.ID_VERSION:
-        return self.__read_headers[self.IDENTITY_HEADER]
+    if (self.IDENTITY_HEADER in self.__read_headers
+        and self.__read_headers[self.ID_VERSION_HEADER] == self.ID_VERSION):
+      return self.__read_headers[self.IDENTITY_HEADER]
     return None
 
   def set_identity(self, identity):
@@ -340,8 +340,10 @@ class THeaderTransport(TTransportBase, CReadableTransport):
                                   "Could not detect client transport type")
 
     if self.__client_type not in self.__supported_client_types:
-      raise TTransportException(TTransportException.INVALID_CLIENT_TYPE,
-                                "Client type {} not supported on server".format(self.__client_type))
+      raise TTransportException(
+          TTransportException.INVALID_CLIENT_TYPE,
+          f"Client type {self.__client_type} not supported on server",
+      )
 
   def read_header_format(self, sz, header_size, data):
     # clear out any previous transforms
@@ -357,16 +359,14 @@ class THeaderTransport(TTransportBase, CReadableTransport):
     num_headers = readVarint(data)
 
     if self.__proto_id == 1 and self.__client_type != \
-            CLIENT_TYPE.HTTP_SERVER:
+              CLIENT_TYPE.HTTP_SERVER:
       raise TTransportException(TTransportException.INVALID_CLIENT_TYPE,
                                 "Trying to recv JSON encoding over binary")
 
     # Read the headers.  Data for each header varies.
     for _ in range(0, num_headers):
       trans_id = readVarint(data)
-      if trans_id == TRANSFORM.ZLIB:
-        self.__read_transforms.insert(0, trans_id)
-      elif trans_id == TRANSFORM.SNAPPY:
+      if trans_id in [TRANSFORM.ZLIB, TRANSFORM.SNAPPY]:
         self.__read_transforms.insert(0, trans_id)
       elif trans_id == TRANSFORM.HMAC:
         raise TApplicationException(TApplicationException.INVALID_TRANSFORM,
@@ -585,8 +585,10 @@ def _read_info_headers(data, end_header, read_headers):
 
 def _frame_size_check(sz, set_max_size, header=True):
   if sz > set_max_size or (not header and sz > MAX_FRAME_SIZE):
-    raise TTransportException(TTransportException.INVALID_FRAME_SIZE,
-                              "%s transport frame was too large" % 'Header' if header else 'Framed')
+    raise TTransportException(
+        TTransportException.INVALID_FRAME_SIZE,
+        'Header transport frame was too large' if header else 'Framed',
+    )
 
 
 class RequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
@@ -599,11 +601,11 @@ class RequestHandler(BaseHTTPServer.BaseHTTPRequestHandler):
     if not self.raw_requestline:
       self.close_connection = 1
       return
-    self.raw_requestline = "POST" + self.raw_requestline
+    self.raw_requestline = f"POST{self.raw_requestline}"
     if not self.parse_request():
       # An error code has been sent, just exit
       return
-    mname = 'do_' + self.command
+    mname = f'do_{self.command}'
     if not hasattr(self, mname):
       self.send_error(501, "Unsupported method (%r)" % self.command)
       return

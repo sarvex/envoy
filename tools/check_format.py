@@ -99,38 +99,30 @@ def executableByOthers(executable):
 def checkTools():
   error_messages = []
 
-  clang_format_abs_path = lookPath(CLANG_FORMAT_PATH)
-  if clang_format_abs_path:
+  if clang_format_abs_path := lookPath(CLANG_FORMAT_PATH):
     if not executableByOthers(clang_format_abs_path):
-      error_messages.append("command {} exists, but cannot be executed by other "
-                            "users".format(CLANG_FORMAT_PATH))
+      error_messages.append(
+          f"command {CLANG_FORMAT_PATH} exists, but cannot be executed by other users"
+      )
   else:
     error_messages.append(
-        "Command {} not found. If you have clang-format in version 7.x.x "
-        "installed, but the binary name is different or it's not available in "
-        "PATH, please use CLANG_FORMAT environment variable to specify the path. "
-        "Examples:\n"
-        "    export CLANG_FORMAT=clang-format-7.0.0\n"
-        "    export CLANG_FORMAT=/opt/bin/clang-format-7\n"
-        "    export CLANG_FORMAT=/usr/local/opt/llvm@7/bin/clang-format".format(CLANG_FORMAT_PATH))
+        f"Command {CLANG_FORMAT_PATH} not found. If you have clang-format in version 7.x.x installed, but the binary name is different or it's not available in PATH, please use CLANG_FORMAT environment variable to specify the path. Examples:\n    export CLANG_FORMAT=clang-format-7.0.0\n    export CLANG_FORMAT=/opt/bin/clang-format-7\n    export CLANG_FORMAT=/usr/local/opt/llvm@7/bin/clang-format"
+    )
 
-  buildifier_abs_path = lookPath(BUILDIFIER_PATH)
-  if buildifier_abs_path:
+  if buildifier_abs_path := lookPath(BUILDIFIER_PATH):
     if not executableByOthers(buildifier_abs_path):
-      error_messages.append("command {} exists, but cannot be executed by other "
-                            "users".format(BUILDIFIER_PATH))
+      error_messages.append(
+          f"command {BUILDIFIER_PATH} exists, but cannot be executed by other users"
+      )
   elif pathExists(BUILDIFIER_PATH):
     if not executableByOthers(BUILDIFIER_PATH):
-      error_messages.append("command {} exists, but cannot be executed by other "
-                            "users".format(BUILDIFIER_PATH))
+      error_messages.append(
+          f"command {BUILDIFIER_PATH} exists, but cannot be executed by other users"
+      )
   else:
     error_messages.append(
-        "Command {} not found. If you have buildifier installed, but the binary "
-        "name is different or it's not available in $GOPATH/bin, please use "
-        "BUILDIFIER_BIN environment variable to specify the path. Example:\n"
-        "    export BUILDIFIER_BIN=/opt/bin/buildifier\n"
-        "If you don't have buildifier installed, you can install it by:\n"
-        "    go get -u github.com/bazelbuild/buildtools/buildifier".format(BUILDIFIER_PATH))
+        f"Command {BUILDIFIER_PATH} not found. If you have buildifier installed, but the binary name is different or it's not available in $GOPATH/bin, please use BUILDIFIER_BIN environment variable to specify the path. Example:\n    export BUILDIFIER_BIN=/opt/bin/buildifier\nIf you don't have buildifier installed, you can install it by:\n    go get -u github.com/bazelbuild/buildtools/buildifier"
+    )
 
   return error_messages
 
@@ -138,9 +130,11 @@ def checkTools():
 def checkNamespace(file_path):
   with open(file_path) as f:
     text = f.read()
-    if not re.search('^\s*namespace\s+Envoy\s*{', text, re.MULTILINE) and \
-       not 'NOLINT(namespace-envoy)' in text:
-      return ["Unable to find Envoy namespace or NOLINT(namespace-envoy) for file: %s" % file_path]
+    if (not re.search('^\s*namespace\s+Envoy\s*{', text, re.MULTILINE)
+        and 'NOLINT(namespace-envoy)' not in text):
+      return [
+          f"Unable to find Envoy namespace or NOLINT(namespace-envoy) for file: {file_path}"
+      ]
   return []
 
 
@@ -158,10 +152,12 @@ def checkJavaProtoOptions(file_path):
   error_messages = []
   if not java_multiple_files:
     error_messages.append(
-        "Java proto option 'java_multiple_files' not set correctly for file: %s" % file_path)
+        f"Java proto option 'java_multiple_files' not set correctly for file: {file_path}"
+    )
   if not java_package_correct:
     error_messages.append(
-        "Java proto option 'java_package' not set correctly for file: %s" % file_path)
+        f"Java proto option 'java_package' not set correctly for file: {file_path}"
+    )
   return error_messages
 
 
@@ -186,10 +182,10 @@ def findSubstringAndReturnError(pattern, file_path, error_message):
   with open(file_path) as f:
     text = f.read()
     if pattern in text:
-      error_messages = [file_path + ': ' + error_message]
+      error_messages = [f'{file_path}: {error_message}']
       for i, line in enumerate(text.splitlines()):
         if pattern in line:
-          error_messages.append("  %s:%s" % (file_path, i + 1))
+          error_messages.append(f"  {file_path}:{i + 1}")
       return error_messages
     return []
 
@@ -200,9 +196,8 @@ def isApiFile(file_path):
 
 def isBuildFile(file_path):
   basename = os.path.basename(file_path)
-  if basename in {"BUILD", "BUILD.bazel"} or basename.endswith(".BUILD"):
-    return True
-  return False
+  return bool(basename in {"BUILD", "BUILD.bazel"}
+              or basename.endswith(".BUILD"))
 
 
 def isExternalBuildFile(file_path):
@@ -222,10 +217,7 @@ def hasInvalidAngleBracketDirectory(line):
     return False
   path = line[INCLUDE_ANGLE_LEN:]
   slash = path.find("/")
-  if slash == -1:
-    return False
-  subdir = path[0:slash]
-  return subdir in SUBDIR_SET
+  return False if slash == -1 else path[:slash] in SUBDIR_SET
 
 
 VERSION_HISTORY_NEW_LINE_REGEX = re.compile('\* [a-z \-_]*: [a-z:`]')
@@ -299,11 +291,10 @@ def hasCondVarWaitFor(line):
   wait_for = line.find('.waitFor(')
   if wait_for == -1:
     return False
-  preceding = line[0:wait_for]
-  if preceding.endswith('time_system') or preceding.endswith('timeSystem()') or \
-     preceding.endswith('time_system_'):
-    return False
-  return True
+  preceding = line[:wait_for]
+  return (not preceding.endswith('time_system')
+          and not preceding.endswith('timeSystem()')
+          and not preceding.endswith('time_system_'))
 
 
 def checkSourceLine(line, file_path, reportError):
@@ -320,10 +311,10 @@ def checkSourceLine(line, file_path, reportError):
   # Some errors cannot be fixed automatically, and actionable, consistent,
   # navigable messages should be emitted to make it easy to find and fix
   # the errors by hand.
-  if not whitelistedForProtobufDeps(file_path):
-    if '"google/protobuf' in line or "google::protobuf" in line:
-      reportError("unexpected direct dependency on google.protobuf, use "
-                  "the definitions in common/protobuf/protobuf.h instead.")
+  if not whitelistedForProtobufDeps(file_path) and (
+      '"google/protobuf' in line or "google::protobuf" in line):
+    reportError("unexpected direct dependency on google.protobuf, use "
+                "the definitions in common/protobuf/protobuf.h instead.")
   if line.startswith('#include <mutex>') or line.startswith('#include <condition_variable'):
     # We don't check here for std::mutex because that may legitimately show up in
     # comments, for example this one.
@@ -333,17 +324,18 @@ def checkSourceLine(line, file_path, reportError):
     # We don't check here for std::shared_timed_mutex because that may
     # legitimately show up in comments, for example this one.
     reportError("Don't use <shared_mutex>, use absl::Mutex for reader/writer locks.")
-  if not whitelistedForRealTime(file_path) and not 'NO_CHECK_FORMAT(real_time)' in line:
-    if 'RealTimeSource' in line or 'RealTimeSystem' in line or \
-       'std::chrono::system_clock::now' in line or 'std::chrono::steady_clock::now' in line or \
-       'std::this_thread::sleep_for' in line or hasCondVarWaitFor(line):
-      reportError("Don't reference real-world time sources from production code; use injection")
-  if not whitelistedForGetTime(file_path):
-    if "std::get_time" in line:
-      if "test/" in file_path:
-        reportError("Don't use std::get_time; use TestUtility::parseTimestamp in tests")
-      else:
-        reportError("Don't use std::get_time; use the injectable time system")
+  if (not whitelistedForRealTime(file_path)
+      and 'NO_CHECK_FORMAT(real_time)' not in line and
+      ('RealTimeSource' in line or 'RealTimeSystem' in line
+       or 'std::chrono::system_clock::now' in line
+       or 'std::chrono::steady_clock::now' in line
+       or 'std::this_thread::sleep_for' in line or hasCondVarWaitFor(line))):
+    reportError("Don't reference real-world time sources from production code; use injection")
+  if not whitelistedForGetTime(file_path) and "std::get_time" in line:
+    if "test/" in file_path:
+      reportError("Don't use std::get_time; use TestUtility::parseTimestamp in tests")
+    else:
+      reportError("Don't use std::get_time; use the injectable time system")
   if 'std::atomic_' in line:
     # The std::atomic_* free functions are functionally equivalent to calling
     # operations on std::atomic<T> objects, so prefer to use that instead.
@@ -387,22 +379,23 @@ def fixBuildPath(file_path):
 
   error_messages = []
   # TODO(htuch): Add API specific BUILD fixer script.
-  if not isApiFile(file_path) and not isSkylarkFile(file_path) and not isWorkspaceFile(file_path):
-    if os.system("%s %s %s" % (ENVOY_BUILD_FIXER_PATH, file_path, file_path)) != 0:
-      error_messages += ["envoy_build_fixer rewrite failed for file: %s" % file_path]
+  if (not isApiFile(file_path) and not isSkylarkFile(file_path)
+      and not isWorkspaceFile(file_path)
+      and os.system(f"{ENVOY_BUILD_FIXER_PATH} {file_path} {file_path}") != 0):
+    error_messages += [f"envoy_build_fixer rewrite failed for file: {file_path}"]
 
-  if os.system("%s -mode=fix %s" % (BUILDIFIER_PATH, file_path)) != 0:
-    error_messages += ["buildifier rewrite failed for file: %s" % file_path]
+  if os.system(f"{BUILDIFIER_PATH} -mode=fix {file_path}") != 0:
+    error_messages += [f"buildifier rewrite failed for file: {file_path}"]
   return error_messages
 
 
 def checkBuildPath(file_path):
   error_messages = []
   if not isApiFile(file_path) and not isSkylarkFile(file_path) and not isWorkspaceFile(file_path):
-    command = "%s %s | diff %s -" % (ENVOY_BUILD_FIXER_PATH, file_path, file_path)
+    command = f"{ENVOY_BUILD_FIXER_PATH} {file_path} | diff {file_path} -"
     error_messages += executeCommand(command, "envoy_build_fixer check failed", file_path)
 
-  command = "%s -mode=diff %s" % (BUILDIFIER_PATH, file_path)
+  command = f"{BUILDIFIER_PATH} -mode=diff {file_path}"
   error_messages += executeCommand(command, "buildifier check failed", file_path)
   error_messages += checkFileContents(file_path, checkBuildLine)
   return error_messages
@@ -426,9 +419,9 @@ def checkSourcePath(file_path):
   if not file_path.endswith(DOCS_SUFFIX):
     if not file_path.endswith(PROTO_SUFFIX):
       error_messages += checkNamespace(file_path)
-      command = ("%s %s | diff %s -" % (HEADER_ORDER_PATH, file_path, file_path))
+      command = f"{HEADER_ORDER_PATH} {file_path} | diff {file_path} -"
       error_messages += executeCommand(command, "header_order.py check failed", file_path)
-    command = ("%s %s | diff %s -" % (CLANG_FORMAT_PATH, file_path, file_path))
+    command = f"{CLANG_FORMAT_PATH} {file_path} | diff {file_path} -"
     error_messages += executeCommand(command, "clang-format check failed", file_path)
 
   if file_path.endswith(PROTO_SUFFIX) and isApiFile(file_path):
@@ -445,32 +438,32 @@ def executeCommand(command,
                    file_path,
                    regex=re.compile(r"^(\d+)[a|c|d]?\d*(?:,\d+[a|c|d]?\d*)?$")):
   try:
-    output = subprocess.check_output(command, shell=True, stderr=subprocess.STDOUT).strip()
-    if output:
+    if output := subprocess.check_output(command,
+                                         shell=True,
+                                         stderr=subprocess.STDOUT).strip():
       return output.split("\n")
     return []
   except subprocess.CalledProcessError as e:
-    if (e.returncode != 0 and e.returncode != 1):
-      return ["ERROR: something went wrong while executing: %s" % e.cmd]
+    if e.returncode not in [0, 1]:
+      return [f"ERROR: something went wrong while executing: {e.cmd}"]
     # In case we can't find any line numbers, record an error message first.
-    error_messages = ["%s for file: %s" % (error_message, file_path)]
+    error_messages = [f"{error_message} for file: {file_path}"]
     for line in e.output.splitlines():
-      for num in regex.findall(line):
-        error_messages.append("  %s:%s" % (file_path, num))
+      error_messages.extend(f"  {file_path}:{num}" for num in regex.findall(line))
     return error_messages
 
 
 def fixHeaderOrder(file_path):
-  command = "%s --rewrite %s" % (HEADER_ORDER_PATH, file_path)
+  command = f"{HEADER_ORDER_PATH} --rewrite {file_path}"
   if os.system(command) != 0:
-    return ["header_order.py rewrite error: %s" % (file_path)]
+    return [f"header_order.py rewrite error: {file_path}"]
   return []
 
 
 def clangFormat(file_path):
-  command = "%s -i %s" % (CLANG_FORMAT_PATH, file_path)
+  command = f"{CLANG_FORMAT_PATH} -i {file_path}"
   if os.system(command) != 0:
-    return ["clang-format rewrite error: %s" % (file_path)]
+    return [f"clang-format rewrite error: {file_path}"]
   return []
 
 
@@ -495,7 +488,7 @@ def checkFormat(file_path):
     error_messages += checkSourcePath(file_path)
 
   if error_messages:
-    return ["From %s" % file_path] + error_messages
+    return [f"From {file_path}"] + error_messages
   return error_messages
 
 
@@ -522,7 +515,8 @@ def checkFormatVisitor(arg, dir_name, names):
   # the caller.
   pool, result_list = arg
   for file_name in names:
-    result = pool.apply_async(checkFormatReturnTraceOnError, args=(dir_name + "/" + file_name,))
+    result = pool.apply_async(checkFormatReturnTraceOnError,
+                              args=(f"{dir_name}/{file_name}", ))
     result_list.append(result)
 
 

@@ -16,10 +16,7 @@ def generateCompilationDatabase(args):
 
 
 def isHeader(filename):
-  for ext in (".h", ".hh", ".hpp", ".hxx"):
-    if filename.endswith(ext):
-      return True
-  return False
+  return any(filename.endswith(ext) for ext in (".h", ".hh", ".hpp", ".hxx"))
 
 
 def isCompileTarget(target, args):
@@ -27,15 +24,10 @@ def isCompileTarget(target, args):
   if not args.include_headers and isHeader(filename):
     return False
 
-  if not args.include_genfiles:
-    if filename.startswith("bazel-out/"):
-      return False
+  if not args.include_genfiles and filename.startswith("bazel-out/"):
+    return False
 
-  if not args.include_external:
-    if filename.startswith("external/"):
-      return False
-
-  return True
+  return bool(args.include_external or not filename.startswith("external/"))
 
 
 def modifyCompileCommand(target):

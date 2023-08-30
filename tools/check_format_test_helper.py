@@ -17,7 +17,7 @@ os.putenv("BUILDIFIER_BIN", "/usr/local/bin/buildifier")
 tools = os.path.dirname(os.path.realpath(__file__))
 tmp = os.path.join(os.getenv('TEST_TMPDIR', "/tmp"), "check_format_test")
 src = os.path.join(tools, 'testdata', 'check_format')
-check_format = sys.executable + " " + os.path.join(tools, 'check_format.py')
+check_format = f"{sys.executable} " + os.path.join(tools, 'check_format.py')
 errors = 0
 
 
@@ -27,14 +27,15 @@ def runCommand(command):
   stdout = []
   status = 0
   try:
-    out = subprocess.check_output(command, shell=True, stderr=subprocess.STDOUT).strip()
-    if out:
+    if out := subprocess.check_output(command,
+                                      shell=True,
+                                      stderr=subprocess.STDOUT).strip():
       stdout = out.split("\n")
   except subprocess.CalledProcessError as e:
     status = e.returncode
     for line in e.output.splitlines():
       stdout.append(line)
-  logging.info("%s" % command)
+  logging.info(f"{command}")
   return status, stdout
 
 
@@ -42,7 +43,7 @@ def runCommand(command):
 # the comamnd run and the status code as well as the stdout, and returning
 # all of that to the caller.
 def runCheckFormat(operation, filename):
-  command = check_format + " " + operation + " " + filename
+  command = f"{check_format} {operation} {filename}"
   status, stdout = runCommand(command)
   return (command, status, stdout)
 
@@ -84,9 +85,9 @@ def fixFileExpectingNoChange(file):
   command, infile, outfile, status, stdout = fixFileHelper(file)
   if status != 0:
     return 1
-  status, stdout = runCommand('diff ' + outfile + ' ' + infile)
+  status, stdout = runCommand(f'diff {outfile} {infile}')
   if status != 0:
-    logging.error(file + ': expected file to remain unchanged')
+    logging.error(f'{file}: expected file to remain unchanged')
     return 1
   return 0
 
@@ -97,7 +98,7 @@ def emitStdoutAsError(stdout):
 
 def expectError(status, stdout, expected_substring):
   if status == 0:
-    logging.error("Expected failure `%s`, but succeeded" % expected_substring)
+    logging.error(f"Expected failure `{expected_substring}`, but succeeded")
     return 1
   for line in stdout:
     if expected_substring in line:
@@ -128,7 +129,8 @@ def checkToolNotFoundError():
   oldPath = os.environ["PATH"]
   os.environ["PATH"] = "/sbin:/usr/sbin"
   clang_format = os.getenv("CLANG_FORMAT", "clang-format-7")
-  errors = checkFileExpectingError("no_namespace_envoy.cc", "Command %s not found." % clang_format)
+  errors = checkFileExpectingError("no_namespace_envoy.cc",
+                                   f"Command {clang_format} not found.")
   os.environ["PATH"] = oldPath
   return errors
 
